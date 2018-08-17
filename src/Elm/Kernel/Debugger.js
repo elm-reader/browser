@@ -8,6 +8,7 @@ import Elm.Kernel.Debug exposing (crash)
 import Elm.Kernel.Json exposing (wrap)
 import Elm.Kernel.List exposing (Cons, Nil)
 import Elm.Kernel.Platform exposing (initialize)
+import Elm.Kernel.Reader exposing (initSourceMaps, impl)
 import Elm.Kernel.Scheduler exposing (binding, succeed)
 import Elm.Kernel.Utils exposing (Tuple0, Tuple2, ap)
 import Elm.Kernel.VirtualDom exposing (node, applyPatches, diff, doc, makeStepper, map, render, virtualize, divertHrefToApp)
@@ -37,6 +38,11 @@ function _Debugger_unsafeCoerce(value)
 
 var _Debugger_element = F4(function(impl, flagDecoder, debugMetadata, args)
 {
+	__Reader_initSourceMaps(debugMetadata.source_map);
+	if (debugMetadata.reader) {
+		// Swap out the user's main for our own.
+		impl = _Reader_impl(debugMetadata);
+	}
 	return __Platform_initialize(
 		flagDecoder,
 		args,

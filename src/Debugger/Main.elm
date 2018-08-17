@@ -20,6 +20,7 @@ import Debugger.History as History exposing (History)
 import Debugger.Metadata as Metadata exposing (Metadata)
 import Debugger.Overlay as Overlay
 import Debugger.Report as Report
+import Reader
 
 
 
@@ -48,6 +49,7 @@ type alias Model model msg =
   { history : History model msg
   , state : State model
   , expando : Expando
+  , reader : Maybe Reader.Model
   , metadata : Result Metadata.Error Metadata
   , overlay : Overlay.State
   , popout : Popout
@@ -109,6 +111,7 @@ wrapInit metadata popout init flags =
   ( { history = History.empty userModel
     , state = Running userModel
     , expando = Expando.init userModel
+    , reader = Nothing
     , metadata = Metadata.decode metadata
     , overlay = Overlay.none
     , popout = popout
@@ -125,6 +128,7 @@ type Msg msg
   = NoOp
   | UserMsg msg
   | ExpandoMsg Expando.Msg
+  | ReaderMsg Reader.Msg
   | Resume
   | Jump Int
   | Open
@@ -176,6 +180,22 @@ wrapUpdate update msg model =
       , Cmd.none
       )
 
+    ReaderMsg readerMsg ->
+      case model.reader of
+        Just readerModel ->
+          let
+            ( newReaderModel, cmd ) =
+              Reader.update readerMsg readerModel
+          in
+              ( { model | reader = Just newReaderModel }
+              , Cmd.map ReaderMsg cmd
+              )
+
+        Nothing ->
+          ( model
+          , Cmd.none
+          )
+
     Resume ->
       case model.state of
         Running _ ->
@@ -191,12 +211,13 @@ wrapUpdate update msg model =
 
     Jump index ->
       let
-        (indexModel, indexMsg) =
+        (indexModel, indexMsg, readerModel) =
           History.get update index model.history
       in
       ( { model
           | state = Paused index indexModel (getLatestModel model.state)
           , expando = Expando.merge indexModel model.expando
+          , reader = Just readerModel
         }
       , Cmd.none
       )
@@ -368,7 +389,7 @@ toBlockerType model =
 
 
 popoutView : Model model msg -> Html (Msg msg)
-popoutView { history, state, expando } =
+popoutView { history, state, expando, reader } =
   node "body"
     [ style "margin" "0"
     , style "padding" "0"
@@ -378,18 +399,29 @@ popoutView { history, state, expando } =
     , style "overflow" "auto"
     ]
     [ viewSidebar state history
-    , Html.map ExpandoMsg <|
-        div
-          [ style "display" "block"
-          , style "float" "left"
-          , style "height" "100%"
-          , style "width" "calc(100% - 30ch)"
-          , style "margin" "0"
-          , style "overflow" "auto"
-          , style "cursor" "default"
-          ]
-          [ Expando.view Nothing expando
-          ]
+    , div
+        [ style "display" "block"
+        , style "float" "left"
+        , style "height" "100%"
+        , style "width" "calc(40% - 30ch)"
+        , style "margin" "0"
+        , style "overflow" "auto"
+        , style "cursor" "default"
+        ]
+        [ Html.map ExpandoMsg (Expando.view Nothing expando)
+        ]
+    , div
+        [ style "height" "100%"
+        , style "width" "60%"
+        , style "overflow" "scroll"
+        ]
+        [ case reader of
+            Nothing ->
+              text "Reader closed."
+
+            Just readerModel ->
+              Html.map ReaderMsg (Reader.view readerModel)
+        ]
     ]
 
 

@@ -20,6 +20,7 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (onClick)
 import Html.Lazy exposing (..)
 import Debugger.Metadata as Metadata
+import Reader
 
 
 
@@ -150,7 +151,7 @@ addRecent msg newModel { model, messages, numMessages } =
 -- GET SUMMARY
 
 
-get : (msg -> model -> (model, a)) -> Int -> History model msg -> ( model, msg )
+get : (msg -> model -> (model, a)) -> Int -> History model msg -> ( model, msg, Reader.Model )
 get update index history =
   let
     recent =
@@ -176,28 +177,32 @@ get update index history =
 
 type GetResult model msg
   = Stepping Int model
-  | Done msg model
+  | Done msg model Reader.Model
 
 
 getHelp : (msg -> model -> (model, a)) -> msg -> GetResult model msg -> GetResult model msg
 getHelp update msg getResult =
   case getResult of
-    Done _ _ ->
+    Done _ _ _ ->
       getResult
 
     Stepping n model ->
       if n == 0 then
-        Done msg (Tuple.first (update msg model))
+        let
+          ( newModel, readerModel ) =
+            Reader.updateExec update msg model
+        in
+        Done msg newModel readerModel
 
       else
         Stepping (n - 1) (Tuple.first (update msg model))
 
 
-undone : GetResult model msg -> ( model, msg )
+undone : GetResult model msg -> ( model, msg, Reader.Model )
 undone getResult =
   case getResult of
-    Done msg model ->
-      ( model, msg )
+    Done msg model readerModel ->
+      ( model, msg, readerModel )
 
     Stepping _ _ ->
       undone getResult -- Debug.crash "Bug in History.get"
