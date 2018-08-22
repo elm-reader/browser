@@ -1,4 +1,4 @@
-module Reader.FrameUI.View.Instrumented exposing (viewFrameTrace)
+module Reader.FrameUI.Instrumented exposing (viewFrameTrace)
 
 {-| Reader.FrameUI.View.Instrumented handles the creation of the clickable,
 highlightable text of a frame.
@@ -18,11 +18,12 @@ import Reader.TraceData.Value as Value exposing (Value)
 viewFrameTrace :
     SourceMap
     -> Maybe TraceData.ExprWithContext
+    -> Maybe TraceData.FrameId
     -> TraceData.InstrumentedFrameData
     -> Result String (Html Msg)
-viewFrameTrace srcMap hoveredExprId tracedFrame =
+viewFrameTrace srcMap hoveredExpr openChildFrameId tracedFrame =
     frameToTokens srcMap tracedFrame.sourceId
-        |> Result.andThen (viewFrameTokens tracedFrame hoveredExprId)
+        |> Result.andThen (viewFrameTokens tracedFrame hoveredExpr openChildFrameId)
         |> Result.map (H.pre [])
 
 
@@ -103,12 +104,13 @@ frameSrcToTokens initialPos src exprRegions =
 viewFrameTokens :
     TraceData.InstrumentedFrameData
     -> Maybe TraceData.ExprWithContext
+    -> Maybe TraceData.FrameId
     -> List Token
     -> Result String (List (Html Msg))
-viewFrameTokens frameTrace hoveredExpr tokens =
+viewFrameTokens frameTrace hoveredExpr openChildFrameId tokens =
     case tokens of
         (TokenChar ch) :: rest ->
-            viewFrameTokens frameTrace hoveredExpr rest
+            viewFrameTokens frameTrace hoveredExpr openChildFrameId rest
                 |> Result.map (\restHtml -> H.text (String.fromChar ch) :: restHtml)
 
         (TokenExprStart exprId) :: rest ->
@@ -117,11 +119,12 @@ viewFrameTokens frameTrace hoveredExpr tokens =
                     { frameTrace = frameTrace
                     , currentExpr = exprId
                     , hoveredExpr = hoveredExpr
+                    , openChildFrameId = openChildFrameId
                     }
             in
             case takeExprTokensToHtml exprRenderingContext rest of
                 Ok ( htmlItems, tokensAfterExpr ) ->
-                    viewFrameTokens frameTrace hoveredExpr tokensAfterExpr
+                    viewFrameTokens frameTrace hoveredExpr openChildFrameId tokensAfterExpr
                         |> Result.map (\restHtml -> htmlItems ++ restHtml)
 
                 Err e ->
@@ -138,6 +141,7 @@ type alias ExprRenderingContext =
     { hoveredExpr : Maybe TraceData.ExprWithContext
     , currentExpr : SourceMap.ExprId
     , frameTrace : TraceData.InstrumentedFrameData
+    , openChildFrameId : Maybe TraceData.FrameId
     }
 
 
@@ -189,32 +193,13 @@ takeExprTokensToHtml context tokens =
                                     , "<no value associated with this expr in trace frame. exprID is " ++ Debug.toString hereExprId ++ " expr is " ++ Debug.toString expr ++ ">"
                                     )
 
-                highlightState =
-                    case maybeExprData of
-                        Nothing ->
-                            Untraced
-
-                        Just _ ->
-                            case context.hoveredExpr of
-                                Just hovered ->
-                                    let
-                                        isHovered =
-                                            (hovered.frameSrcId == context.frameTrace.sourceId)
-                                                && (hovered.exprId == hereExprId)
-                                                && (hovered.stackFrameId == context.frameTrace.runtimeId)
-                                    in
-                                    if isHovered then
-                                        Hovered
-                                    else
-                                        NoHighlight
-
-                                Nothing ->
-                                    NoHighlight
+                highlights =
+                    highlightsFor context maybeExprData
 
                 exprOptions =
                     { title = exprTitle
                     , maybeExprData = maybeExprData
-                    , highlightState = highlightState
+                    , highlights = highlights
                     , contents = [] -- to be filled in below
                     }
             in
@@ -243,34 +228,97 @@ takeExprTokensToHtml context tokens =
                     )
 
 
+-- EXPRESSION RENDERING: highlighting and event handling
+
 type alias ExprOptions =
     { title : String
     , maybeExprData : Maybe TraceData.ExprWithContext
-    , highlightState : HighlightState
+    , highlights : Highlights
     , contents : List (Html Msg)
     }
 
 
-type HighlightState
+type Highlight
     = Hovered
+    -- for expressions with no recorded trace value:
     | Untraced
-    | NoHighlight
+    -- for expressions whose child frames are open in the UI:
+    | OpenedCall
+
+type alias Highlights = List Highlight
+
+highlightsFor : ExprRenderingContext -> Maybe TraceData.ExprWithContext -> Highlights
+highlightsFor context maybeExprData =
+    case maybeExprData of
+        Nothing ->
+            [ Untraced ]
+
+        Just exprData ->
+            highlightsForOpenedCall context exprData.expr.childFrame
+                ++ highlightsForHovered context exprData.exprId
+
+highlightsForOpenedCall : ExprRenderingContext -> Maybe TraceData.Frame -> Highlights
+highlightsForOpenedCall {openChildFrameId} maybeChildFrame =
+    case (openChildFrameId, maybeChildFrame) of
+        (Just idOfOpened, Just childFrame) ->
+            if idOfOpened == TraceData.frameIdOf childFrame then
+                [ OpenedCall ]
+            else
+                []
+
+        _ ->
+            []
 
 
-highlightStateStyles hs =
+highlightsForHovered : ExprRenderingContext -> SourceMap.ExprId -> Highlights
+highlightsForHovered context hereExprId =
+    case context.hoveredExpr of
+        Just hovered ->
+            let
+                isHovered =
+                    (hovered.frameSrcId == context.frameTrace.sourceId)
+                        && (hovered.exprId == hereExprId)
+                        && (hovered.stackFrameId == context.frameTrace.runtimeId)
+            in
+            if isHovered then
+                [ Hovered ]
+            else
+                []
+
+        Nothing ->
+            []
+
+
+baseStyle =
+    [ A.style "border-radius" "3px"
+    , A.style "padding" "1px"
+    , A.style "margin" "1px"
+    ]
+
+
+highlightStyles hs =
+    let
+        border =
+            [ A.style "border" "1px solid #51d59d"
+            , A.style "margin" "0px !important"
+            ]
+    in
     case hs of
         Hovered ->
             [ A.style "background-color" "rgb(230, 230, 200)" ]
 
         Untraced ->
-            [ A.style "text-decoration" "line-through" ]
+            [ A.style "text-decoration" "line-through"
+            ]
 
-        NoHighlight ->
-            []
+        OpenedCall ->
+            [ A.style "border" ""
+            ]
+                ++ border
 
 
 exprElem : ExprOptions -> Html Msg
-exprElem { title, maybeExprData, highlightState, contents } =
+exprElem { title, maybeExprData, highlights, contents } =
     let
         handlers =
             case maybeExprData of
@@ -280,32 +328,38 @@ exprElem { title, maybeExprData, highlightState, contents } =
                     ]
 
                 Just exprData ->
-                    let
-                        handleMouseOver =
-                            E.stopPropagationOn "mouseover"
-                                (JD.succeed ( Msg.HoverExpr exprData, True ))
-
-                        handleClick =
-                            let
-                                ( msg, cursor ) =
-                                    case exprData.expr.childFrame of
-                                        Nothing ->
-                                            ( Msg.NoOp, "default" )
-
-                                        Just childFrame ->
-                                            ( Msg.OpenChildFrame (TraceData.frameIdOf childFrame)
-                                            , "pointer"
-                                            )
-                            in
-                            [ E.stopPropagationOn "click" (JD.succeed ( msg, True ))
-                            , A.style "cursor" cursor
-                            ]
-                    in
-                    handleMouseOver :: handleClick
+                    handleMouseOut
+                        :: handleMouseOver exprData
+                        :: handleClick exprData
     in
     H.span
-        (highlightStateStyles highlightState
+        (List.concatMap highlightStyles highlights
             ++ handlers
+            ++ baseStyle
             ++ [ A.title title ]
         )
         contents
+
+handleMouseOver exprData =
+    E.stopPropagationOn "mouseover"
+        (JD.succeed ( Msg.HoverExpr exprData, True ))
+
+handleMouseOut =
+    E.stopPropagationOn "mouseout"
+        (JD.succeed ( Msg.UnHoverExpr, True ))
+
+handleClick exprData =
+    let
+        ( msg, cursor ) =
+            case exprData.expr.childFrame of
+                Nothing ->
+                    ( Msg.NoOp, "default" )
+
+                Just childFrame ->
+                    ( Msg.OpenChildFrame (TraceData.frameIdOf childFrame)
+                    , "pointer"
+                    )
+    in
+    [ E.stopPropagationOn "click" (JD.succeed ( msg, True ))
+    , A.style "cursor" cursor
+    ]

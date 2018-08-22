@@ -9,42 +9,38 @@ module Reader.SelectedFrameTree
 
 import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.TraceData as TraceData exposing (TraceData)
+import Reader.FrameUI as FrameUI exposing (FrameUI)
 
 
-type SelectedFrameTree
-    = SelectedFrameTree
-        -- the selected frame:
-        TraceData.Frame
-        -- the open child frame, if any
-        (Maybe TraceData.FrameId)
-        -- all the child frames (including the open one):
-        (List SelectedFrameTree)
+type SelectedFrameTree = SelectedFrameTree FrameUI (List SelectedFrameTree)
 
 
 fromTrace : TraceData.Frame -> SelectedFrameTree
 fromTrace frame =
-    SelectedFrameTree frame Nothing (List.map fromTrace (TraceData.childFrames frame))
+    SelectedFrameTree
+        (FrameUI.fromTrace frame)
+        (List.map fromTrace (TraceData.childFrames frame))
 
 
 frameIdOf : SelectedFrameTree -> TraceData.FrameId
-frameIdOf (SelectedFrameTree frame _ _) =
+frameIdOf (SelectedFrameTree {frame} _) =
     TraceData.frameIdOf frame
 
 
 openFrame : TraceData.FrameId -> SelectedFrameTree -> SelectedFrameTree
 openFrame childFrameId =
     let
-        isTarget (SelectedFrameTree otherFrame _ _) =
+        isTarget (SelectedFrameTree otherFrameUI _) =
             TraceData.frameIdsEqual
                 childFrameId
-                (TraceData.frameIdOf otherFrame)
+                (TraceData.frameIdOf otherFrameUI.frame)
 
         -- TODO: this can be optimized to avoid linear lookup time of isAncestorOf by
         -- taking the tail of the ancestor list after each iteration.
         isAncestor =
             frameIdOf >> TraceData.isAncestorOf childFrameId
 
-        openFrameIn ((SelectedFrameTree otherFrame maybeOpenChildId children) as selTree) =
+        openFrameIn ((SelectedFrameTree frameUI children) as selTree) =
             if isTarget selTree then
                 selTree
             else
@@ -61,28 +57,34 @@ openFrame childFrameId =
                         children
                             |> List.foldr combine ( Nothing, [] )
                 in
-                SelectedFrameTree otherFrame maybeNewOpenChild newChildren
+                SelectedFrameTree
+                    { frameUI | openedChild = maybeNewOpenChild }
+                    newChildren
     in
     openFrameIn
 
 
 getOpenFrames :
     SelectedFrameTree
-    -> List TraceData.Frame -- TODO: include more data than TraceData.Frame
-getOpenFrames (SelectedFrameTree thisFrame maybeOpenChildId children) =
-    case maybeOpenChildId of
+    -> List FrameUI
+getOpenFrames (SelectedFrameTree thisFrameUI children) =
+    case thisFrameUI.openedChild of
         Nothing ->
-            [ thisFrame ]
+            [ thisFrameUI ]
 
         Just childId ->
-            case List.filter (frameIdOf >> TraceData.frameIdsEqual childId) children of
+            let
+                isTarget =
+                    TraceData.frameIdsEqual childId
+            in
+            case children |> List.filter (frameIdOf >> isTarget) of
                 [ openChild ] ->
-                    thisFrame :: getOpenFrames openChild
+                    thisFrameUI :: getOpenFrames openChild
 
                 [] ->
                     Debug.log
                         "ERROR: did not find open child ID in child frames"
-                        [ thisFrame ]
+                        [ thisFrameUI ]
 
                 (anOpenChild :: _ :: _) as duplicates ->
                     let
@@ -91,5 +93,5 @@ getOpenFrames (SelectedFrameTree thisFrame maybeOpenChildId children) =
                                 "ERROR: found duplicate child frames with same ID"
                                 (List.map frameIdOf duplicates)
                     in
-                    thisFrame
+                    thisFrameUI
                         :: getOpenFrames anOpenChild
