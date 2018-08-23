@@ -75,7 +75,8 @@ view srcMap hoveredExpr frameUI =
                                     frameTraceHtml
 
                         headerMsg =
-                            H.p []
+                            H.div
+                                [ A.style "font-size" "0.7em"  ]
                                 [ H.text "Instrumented frame (sourceId: "
                                 , H.code [] [ H.text (SourceMap.frameIdToString tracedFrame.sourceId) ]
                                 , H.text ", runtimeId: "
@@ -127,8 +128,9 @@ viewNonInstrumented srcMap childFrames hoveredExprId =
 frameContainerElem : List (Html msg) -> Html msg
 frameContainerElem items =
     H.div
-        [ A.style "border-left" "1px solid green"
-        , A.style "padding-left" "3px"
+        [ A.style "border" "1px solid green"
+        , A.style "padding" "3px"
+        , A.style "border-radius" "4px"
         , A.style "margin-bottom" "6px"
         ]
         items

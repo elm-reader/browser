@@ -24,7 +24,7 @@ viewFrameTrace :
 viewFrameTrace srcMap hoveredExpr openChildFrameId tracedFrame =
     frameToTokens srcMap tracedFrame.sourceId
         |> Result.andThen (viewFrameTokens tracedFrame hoveredExpr openChildFrameId)
-        |> Result.map (H.pre [])
+        |> Result.map (H.pre [ A.style "margin" "0" ])
 
 
 type Token
