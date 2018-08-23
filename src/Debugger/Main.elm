@@ -205,6 +205,7 @@ wrapUpdate update msg model =
           ( { model
               | state = Running userModel
               , expando = Expando.merge userModel model.expando
+              , reader = Nothing
             }
           , scroll model.popout
           )
