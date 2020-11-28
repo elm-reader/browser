@@ -13,36 +13,32 @@ import Html as H exposing (Html)
 import Html.Attributes as A
 import Reader.Dict as Dict exposing (Dict)
 import Reader.FrameUI.Instrumented as Instrumented
+import Reader.FrameUI.Token as Token exposing (Token)
 import Reader.Msg as Msg exposing (Msg)
 import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.TraceData as TraceData exposing (TraceData)
 
-
 -- MODEL
-
 
 type alias FrameUI =
     { frame : TraceData.Frame
     , openedChild : Maybe TraceData.FrameId
+    , tokens : Maybe (List Token)
     }
-
 
 fromTrace : TraceData.Frame -> FrameUI
 fromTrace trace =
-   FrameUI trace Nothing
-
+    FrameUI trace Nothing Nothing
 
 -- VIEW
-
-
 view :
-   SourceMap
-   -> Maybe TraceData.ExprWithContext
-   -> FrameUI
-   -> Html Msg
+    SourceMap
+    -> Maybe TraceData.ExprWithContext
+    -> FrameUI
+    -> Html Msg
 view srcMap hoveredExpr frameUI =
     case frameUI.frame of
-        (TraceData.NonInstrumentedFrame runtimeId childFrames) as frame ->
+        TraceData.NonInstrumentedFrame runtimeId childFrames ->
             frameContainerElem
                 [ H.text ("Non-instrumented frame (" ++ TraceData.frameIdToString runtimeId ++ ").")
                 , viewNonInstrumented srcMap childFrames hoveredExpr
@@ -62,7 +58,7 @@ view srcMap hoveredExpr frameUI =
                 Just ( frame, src ) ->
                     let
                         content =
-                            case Instrumented.viewFrameTrace srcMap hoveredExpr frameUI.openedChild tracedFrame of
+                            case Instrumented.viewFrameTrace srcMap hoveredExpr frameUI.openedChild frameUI.tokens tracedFrame of
                                 Err e ->
                                     H.div []
                                         [ H.p [ A.style "font-weight" "bold" ] [ H.text "Got error:" ]
@@ -71,7 +67,7 @@ view srcMap hoveredExpr frameUI =
                                         , H.pre [] [ H.text src ]
                                         ]
 
-                                Ok frameTraceHtml ->
+                                Ok (_, frameTraceHtml) ->
                                     frameTraceHtml
 
                         headerMsg =
@@ -98,6 +94,10 @@ view srcMap hoveredExpr frameUI =
                                 ++ Debug.toString srcMap
                     in
                     frameContainerElem [ H.pre [] [ H.text errMsg ] ]
+
+        TraceData.FrameThunk id thunk ->
+           frameContainerElem [ H.text ("Thunk frame with id " ++ TraceData.frameIdToString id) ]
+
 
 
 fmtErr : String -> Html msg

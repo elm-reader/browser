@@ -38,16 +38,21 @@ function _Debugger_unsafeCoerce(value)
 
 var _Debugger_element = F4(function(impl, flagDecoder, debugMetadata, args)
 {
+	//FIXME console.log("debug metadata:", debugMetadata);
 	__Reader_initSourceMaps(debugMetadata.source_map);
 	if (debugMetadata.reader) {
 		// Swap out the user's main for our own.
 		impl = _Reader_impl(debugMetadata);
 	}
+	var update = F2(function (a, b) {
+		//FIXME console.log("MODEL:", b);
+		return impl.__$update(a)(b);
+	});
 	return __Platform_initialize(
 		flagDecoder,
 		args,
 		A3(__Main_wrapInit, __Json_wrap(debugMetadata), _Debugger_popout(), impl.__$init),
-		__Main_wrapUpdate(impl.__$update),
+		__Main_wrapUpdate(update),
 		__Main_wrapSubs(impl.__$subscriptions),
 		function(sendToApp, initialModel)
 		{
@@ -106,6 +111,7 @@ var _Debugger_element = F4(function(impl, flagDecoder, debugMetadata, args)
 
 var _Debugger_document = F4(function(impl, flagDecoder, debugMetadata, args)
 {
+	consoel.log("in _Debugger_document; debugMetadata:", debugMetadata);
 	return __Platform_initialize(
 		flagDecoder,
 		args,

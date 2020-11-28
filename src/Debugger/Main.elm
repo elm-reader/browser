@@ -21,6 +21,7 @@ import Debugger.Metadata as Metadata exposing (Metadata)
 import Debugger.Overlay as Overlay
 import Debugger.Report as Report
 import Reader
+import Debug
 
 
 

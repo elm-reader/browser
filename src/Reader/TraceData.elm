@@ -8,6 +8,9 @@ module Reader.TraceData
         , TraceData(..)
         , childFrames
         , decode
+        , decodeFrame
+        , exprChildFrame
+        , exprValue
         , frameIdOf
         , frameIdToString
         , frameIdsEqual
@@ -22,6 +25,8 @@ import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.TraceData.Value as Value exposing (Value)
 import Tuple
 
+import Elm.Kernel.Coerce
+
 
 -- TRACE DATA
 
@@ -32,7 +37,7 @@ type TraceData
 
 decode : JD.Decoder TraceData
 decode =
-    JD.map TraceData <| JD.list decodeFrameTrace
+    JD.map TraceData <| JD.list decodeFrame
 
 
 
@@ -42,6 +47,7 @@ decode =
 type Frame
     = InstrumentedFrame InstrumentedFrameData
     | NonInstrumentedFrame FrameId (List Frame)
+    | FrameThunk FrameId (() -> Frame)
 
 
 type FrameId
@@ -82,6 +88,9 @@ isFrameInstrumented frame =
         NonInstrumentedFrame _ _ ->
             False
 
+        FrameThunk _ _ ->
+            False -- FIXME
+
 
 frameIdOf : Frame -> FrameId
 frameIdOf frame =
@@ -91,6 +100,10 @@ frameIdOf frame =
 
         InstrumentedFrame { runtimeId } ->
             runtimeId
+
+        FrameThunk id _ ->
+            id
+
 
 
 frameIdsEqual : FrameId -> FrameId -> Bool
@@ -108,11 +121,11 @@ isAncestorOf (FrameId _ ancestors) (FrameId possibleAncestor _) =
     List.member possibleAncestor ancestors
 
 
-decodeFrameTrace : JD.Decoder Frame
-decodeFrameTrace =
+decodeFrame : JD.Decoder Frame
+decodeFrame =
     let
         decFrame =
-            JD.lazy (\() -> decodeFrameTrace)
+            JD.lazy (\() -> decodeFrame)
 
         decExpr =
             JD.lazy (\() -> decodeExpr)
@@ -127,8 +140,13 @@ decodeFrameTrace =
             JD.map2 NonInstrumentedFrame
                 (JD.field "runtime_id" decodeFrameId)
                 (JD.field "child_frames" <| JD.list decFrame)
+
+        decodeThunk =
+            JD.map2 (\_ a -> a) (JD.field "is_thunk" JD.bool) <|
+                (JD.map2 Tuple.pair JD.value (JD.field "runtime_id" decodeFrameId)
+                    |> JD.map Elm.Kernel.Coerce.decodeFrameThunk)
     in
-    JD.oneOf [ decodeNonInstrumented, decodeInstrumented ]
+    JD.oneOf [ decodeNonInstrumented, decodeInstrumented, decodeThunk ]
 
 
 childFrames : Frame -> List Frame
@@ -136,11 +154,14 @@ childFrames frameTrace =
     case frameTrace of
         InstrumentedFrame { exprs } ->
             Dict.values exprs
-                |> List.map .childFrame
+                |> List.map exprChildFrame
                 |> List.filterMap identity
 
         NonInstrumentedFrame _ children ->
             children
+
+        FrameThunk _ _ ->
+            Debug.log "WARNING: childFrames got a FrameThunk" []
 
 
 
@@ -148,17 +169,24 @@ childFrames frameTrace =
 
 
 {-| -}
-type alias Expr =
-    { value : Maybe Value
-    , childFrame : Maybe Frame -- frame that created the expression
-    }
+type Expr =
+    -- childFrame is the frame that returned the value of this expression
+    Expr { value : Maybe Value , childFrame : Maybe Frame }
+
+
+exprValue : Expr -> Maybe Value
+exprValue (Expr {value}) = value
+
+
+exprChildFrame : Expr -> Maybe Frame
+exprChildFrame (Expr {childFrame}) = childFrame
 
 
 decodeExpr : JD.Decoder Expr
 decodeExpr =
-    JD.map2 Expr
+    JD.map2 (\val frame -> Expr {value = val, childFrame = frame})
         (JD.field "val" <| JD.nullable Value.decode)
-        (JD.field "child_frame" <| JD.nullable decodeFrameTrace)
+        (JD.field "child_frame" <| JD.nullable decodeFrame)
 
 
 type alias ExprWithContext =

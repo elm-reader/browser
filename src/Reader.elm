@@ -3,23 +3,13 @@ module Reader
         ( Mode(..)
         , Model
         , Msg
-        , markInstrumented
         , parseConfig
-        , recordCall
-        , recordExpr
-        , recordFrame
-        , seq
         , update
         , updateExec
         , view
         )
 
 {-| Reader.
-
-
-# Hooks
-
-@docs recordExpr, recordCall, recordFrame, markInstrumented, seq
 
 
 # Kernel util
@@ -33,8 +23,8 @@ module Reader
 
 -}
 
-import Debug exposing (toString)
-import Elm.Kernel.Reader
+import Debug exposing (toString, log)
+import Reader.Hooks
 import Html exposing (..)
 import Html.Attributes as A
 import Html.Events as E
@@ -47,57 +37,26 @@ import Reader.SelectedFrameTree as SelectedFrameTree exposing (SelectedFrameTree
 import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.TraceData as TraceData exposing (TraceData(..))
 import Reader.TraceData.Value as Value exposing (Value)
-
-
--- HOOKS
-
-
-{-| -}
-recordExpr : Int -> a -> a
-recordExpr =
-    Elm.Kernel.Reader.recordExpr
-
-
-{-| -}
-recordCall : Int -> (a -> b) -> (() -> c) -> c
-recordCall =
-    Elm.Kernel.Reader.recordCall
-
-
-{-| -}
-recordFrame : String -> (() -> a) -> a
-recordFrame =
-    Elm.Kernel.Reader.recordFrame
-
-
-{-| -}
-markInstrumented : (a -> b) -> (a -> b)
-markInstrumented =
-    Elm.Kernel.Reader.markInstrumented
-
-
-{-| -}
-seq : a -> b -> b
-seq =
-    Elm.Kernel.Reader.seq
-
+import Elm.Kernel.Reader
 
 
 -- KERNEL UTIL
+
+parseSourceMap : JD.Value -> Result JD.Error SourceMap
+parseSourceMap = JD.decodeValue SourceMap.decode
 
 
 {-| parseConfig is used by Reader.js to initialize the model from
 the JSON containing source map and tracing data.
 -}
-parseConfig : Mode -> String -> Model
-parseConfig mode data =
+parseConfig : Mode -> SourceMap -> JD.Value -> Model
+parseConfig mode srcMap data =
     let
         decode =
-            JD.map2 (\src traces -> { sources = src, traces = traces })
-                (JD.field "source_map" SourceMap.decode)
+            JD.map (\traces -> { sources = srcMap, traces = traces })
                 (JD.field "traces" TraceData.decode)
     in
-    case JD.decodeString decode data of
+    case JD.decodeValue decode data of
         Err e ->
             ProgramDataError e
 
@@ -110,20 +69,52 @@ parseConfig mode data =
 
                         TraceData [] ->
                             Nothing
+                tracesOutline =
+                    let
+                        (TraceData topLevelFrames) = traces
+                        instrumentedFrameTraces =
+                            topLevelFrames
+                                |> List.filterMap
+                                    (\f ->
+                                        case f of
+                                            TraceData.InstrumentedFrame frameData ->
+                                                Just frameData
+
+                                            TraceData.NonInstrumentedFrame _ _ ->
+                                                Nothing
+
+                                            TraceData.FrameThunk _ _ ->
+                                                -- FIXME
+                                                Debug.log "got FrameThunk (in Reader.elm:tracesOutline)!" Nothing
+                                    )
+                    in
+                    { topLevelInstrumented = instrumentedFrameTraces
+                    , numNoninstrumented =
+                        List.length topLevelFrames - List.length instrumentedFrameTraces
+                    }
             in
             ProgramDataReceived
                 { sources = sources
-                , traces = traces
+                , tracesOutline = tracesOutline
                 , hoveredExpr = Nothing
                 , selectedFrames = selectedFrames
                 , mode = mode
                 }
 
+parseFrame : JD.Value -> TraceData.Frame
+parseFrame data =
+    case JD.decodeValue TraceData.decodeFrame data of
+        Err e ->
+            Debug.todo ("Reader.parseFrame: failed to decode frame trace: " ++ JD.errorToString e)
+
+        Ok frameTrace ->
+            frameTrace
+
 
 {-| -}
 updateExec : (msg -> model -> ( model, a )) -> msg -> model -> ( model, Model )
 updateExec =
-    Elm.Kernel.Reader.updateExec
+    Reader.Hooks.updateExec
 
 
 
@@ -139,9 +130,15 @@ type Model
     | ProgramDataReceived ModelAfterInit
 
 
+type alias TracesOutline =
+    { numNoninstrumented : Int
+    , topLevelInstrumented : List TraceData.InstrumentedFrameData
+    }
+
+
 type alias ModelAfterInit =
     { sources : SourceMap
-    , traces : TraceData
+    , tracesOutline : TracesOutline
     , hoveredExpr : Maybe TraceData.ExprWithContext
     , selectedFrames : Maybe SelectedFrameTree
     , mode : Mode
@@ -178,11 +175,7 @@ update msg model =
             )
 
         ProgramDataReceived data ->
-            let
-                newData =
-                    updateAfterInit msg data
-            in
-            ( ProgramDataReceived newData
+            ( ProgramDataReceived (updateAfterInit msg data)
             , Cmd.none
             )
 
@@ -212,7 +205,12 @@ updateAfterInit msg model =
                     Debug.log "Unexpected OpenChildFrame msg!" model
 
                 Just topLevelSelectedFrame ->
-                    { model | selectedFrames = Maybe.map (SelectedFrameTree.openFrame childFrameId) model.selectedFrames }
+                    { model |
+                        selectedFrames =
+                            Maybe.map
+                                (SelectedFrameTree.openFrame childFrameId model.sources)
+                                model.selectedFrames
+                    }
 
 
 
@@ -233,12 +231,12 @@ view generalModel =
 
 
 viewAfterInit : ModelAfterInit -> Html Msg
-viewAfterInit { sources, traces, hoveredExpr, selectedFrames, mode } =
+viewAfterInit { sources, tracesOutline, hoveredExpr, selectedFrames, mode } =
     let
         outlineSidebar =
             case mode of
                 ModeBrowse ->
-                    [ viewOutlineSidebar (A.style "flex" "2") traces ]
+                    [ viewOutlineSidebar (A.style "flex" "2") tracesOutline ]
 
                 ModeDebug ->
                     []
@@ -260,29 +258,14 @@ viewAfterInit { sources, traces, hoveredExpr, selectedFrames, mode } =
             ]
             (outlineSidebar
                 ++ [ viewTraceWindow (A.style "flex" "5") sources hoveredExpr selectedFrames
-                , viewDetailsSidebar [ A.style "flex" "3" ] hoveredExpr
-                ]
+                   , viewDetailsSidebar [ A.style "flex" "3" ] hoveredExpr
+                   ]
             )
 
 
-viewOutlineSidebar : Attribute Msg -> TraceData -> Html Msg
-viewOutlineSidebar width (TraceData frames) =
+viewOutlineSidebar : Attribute Msg -> TracesOutline -> Html Msg
+viewOutlineSidebar width {numNoninstrumented, topLevelInstrumented} =
     let
-        instrumented =
-            frames
-                |> List.filterMap
-                    (\f ->
-                        case f of
-                            TraceData.InstrumentedFrame data ->
-                                Just data
-
-                            TraceData.NonInstrumentedFrame _ _ ->
-                                Nothing
-                    )
-
-        numNonInstrumented =
-            List.length frames - List.length instrumented
-
         viewFrameLink frame =
             a
                 [ A.href "#"
@@ -291,9 +274,8 @@ viewOutlineSidebar width (TraceData frames) =
                 [ text (SourceMap.frameIdToString frame.sourceId) ]
     in
     Flex.columnWith [ width ] <|
-        List.map viewFrameLink instrumented
-            ++ [ text (String.fromInt numNonInstrumented ++ " noninstrumented frames")
-               ]
+        List.map viewFrameLink topLevelInstrumented
+            ++ [ text (String.fromInt numNoninstrumented ++ " noninstrumented frames") ]
 
 
 viewDetailsSidebar : List (Attribute Msg) -> Maybe TraceData.ExprWithContext -> Html Msg
@@ -307,7 +289,7 @@ viewDetailsSidebar layout maybeExpr =
             container [ text "No expression selected" ]
 
         Just { frameSrcId, exprId, expr } ->
-            case expr.value of
+            case TraceData.exprValue expr of
                 Nothing ->
                     container [ text "Expression has no (recorded) value" ]
 
@@ -328,7 +310,7 @@ viewTraceWindow width sources hoveredExpr maybeTrace =
     in
     case maybeTrace of
         Nothing ->
-            container [ text "Select a frame to view on the left" ]
+            container [ text (Elm.Kernel.Reader.log "in Nothing branch" "Select a frame to view on the left") ]
 
         Just selFrame ->
             let
@@ -337,4 +319,4 @@ viewTraceWindow width sources hoveredExpr maybeTrace =
                         |> SelectedFrameTree.getOpenFrames
                         |> List.map (FrameUI.view sources hoveredExpr)
             in
-            container childTraces
+            Elm.Kernel.Reader.log "in Just branch" (container childTraces)

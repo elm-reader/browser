@@ -295,24 +295,24 @@ lookupRegionSource { mod, start, end } sources =
 
 
 {-| exprsStartingAt returns a list of the IDs of expressions with a region
-starting at `pos`, in increasing order of the length of the associated region.
+starting at `pos`, in decreasing order of the length of the associated region.
 -}
 exprsStartingAt : Position -> Dict ExprId (List Region) -> List ExprId
 exprsStartingAt pos exprRegions =
     exprsWithARegionFulfilling (\region -> region.start == pos) exprRegions
         |> List.sortWith
-            (\( _, r1 ) ( _, r2 ) -> comparePositions r1.end r2.end)
+            (\( _, r1 ) ( _, r2 ) -> comparePositions r2.end r1.end)
         |> List.map (\( exprId, _ ) -> exprId)
 
 
 {-| exprsEndingAt returns a list of the IDs of expressions with a region
-ending at `pos`, in decreasing order of the length of the associated region.
+ending at `pos`, in increasing order of the length of the associated region.
 -}
 exprsEndingAt : Position -> Dict ExprId (List Region) -> List ExprId
 exprsEndingAt pos exprRegions =
     exprsWithARegionFulfilling (\region -> region.end == pos) exprRegions
         |> List.sortWith
-            (\( _, r1 ) ( _, r2 ) -> comparePositions r1.start r2.start)
+            (\( _, r1 ) ( _, r2 ) -> comparePositions r2.start r1.start)
         |> List.map (\( exprId, _ ) -> exprId)
 
 

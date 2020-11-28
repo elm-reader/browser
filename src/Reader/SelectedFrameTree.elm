@@ -7,42 +7,90 @@ module Reader.SelectedFrameTree
         , openFrame
         )
 
+import Elm.Kernel.Reader
 import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.TraceData as TraceData exposing (TraceData)
 import Reader.FrameUI as FrameUI exposing (FrameUI)
+import Reader.FrameUI.Instrumented as Instrumented
+
+type SelectedFrameTree
+    = Thunk TraceData.FrameId (() -> TraceData.Frame)
+    | Concrete Evaluated
 
 
-type SelectedFrameTree = SelectedFrameTree FrameUI (List SelectedFrameTree)
+type Evaluated = Evaluated FrameUI (List SelectedFrameTree)
 
+
+evaluate : SelectedFrameTree -> Evaluated
+evaluate sft =
+    case sft of
+        Thunk _ thunk ->
+            fromEvaluatedTrace (thunk ())
+
+        Concrete frame ->
+            frame
 
 fromTrace : TraceData.Frame -> SelectedFrameTree
 fromTrace frame =
-    SelectedFrameTree
+    case frame of
+        TraceData.FrameThunk id thunk ->
+            Thunk id thunk
+
+        _ ->
+            Concrete (fromEvaluatedTrace frame)
+
+fromEvaluatedTrace : TraceData.Frame -> Evaluated
+fromEvaluatedTrace frame =
+    Evaluated
         (FrameUI.fromTrace frame)
         (List.map fromTrace (TraceData.childFrames frame))
 
-
 frameIdOf : SelectedFrameTree -> TraceData.FrameId
-frameIdOf (SelectedFrameTree {frame} _) =
-    TraceData.frameIdOf frame
+frameIdOf sft =
+    case sft of
+        Thunk id _ ->
+            id
+
+        Concrete (Evaluated frameUI _) ->
+            TraceData.frameIdOf frameUI.frame
 
 
-openFrame : TraceData.FrameId -> SelectedFrameTree -> SelectedFrameTree
-openFrame childFrameId =
+evaluateWithTokens : SourceMap -> SelectedFrameTree -> Evaluated
+evaluateWithTokens srcMap sft =
     let
-        isTarget (SelectedFrameTree otherFrameUI _) =
+        (Evaluated frameUI children) =
+            evaluate sft
+
+        newFrameUI =
+            { frameUI
+                | tokens =
+                    case frameUI.frame of
+                        TraceData.InstrumentedFrame {sourceId} ->
+                            Result.toMaybe (Instrumented.frameToTokens srcMap sourceId)
+
+                        _ ->
+                            Nothing
+            }
+    in
+    Evaluated newFrameUI children
+
+
+openFrame : TraceData.FrameId -> SourceMap -> SelectedFrameTree -> SelectedFrameTree
+openFrame childFrameId sources =
+    let
+        isTarget otherSelTree =
             TraceData.frameIdsEqual
                 childFrameId
-                (TraceData.frameIdOf otherFrameUI.frame)
+                (frameIdOf otherSelTree)
 
         -- TODO: this can be optimized to avoid linear lookup time of isAncestorOf by
         -- taking the tail of the ancestor list after each iteration.
         isAncestor =
             frameIdOf >> TraceData.isAncestorOf childFrameId
 
-        openFrameIn ((SelectedFrameTree frameUI children) as selTree) =
+        openFrameIn selTree =
             if isTarget selTree then
-                selTree
+                Concrete (evaluateWithTokens sources selTree)
             else
                 let
                     combine sf ( newChild, restChildren ) =
@@ -53,45 +101,63 @@ openFrame childFrameId =
                         else
                             ( newChild, sf :: restChildren )
 
+                    (Evaluated frameUI children) = evaluateWithTokens sources selTree
+
                     ( maybeNewOpenChild, newChildren ) =
-                        children
-                            |> List.foldr combine ( Nothing, [] )
+                        List.foldr combine ( Nothing, [] ) children
                 in
-                SelectedFrameTree
-                    { frameUI | openedChild = maybeNewOpenChild }
-                    newChildren
+                Concrete
+                    (Evaluated
+                        { frameUI
+                            | openedChild = maybeNewOpenChild
+                        }
+                        newChildren
+                    )
     in
     openFrameIn
 
+isJust : Maybe a -> Bool
+isJust maybe =
+    case maybe of
+        Just _ ->
+            True
+
+        Nothing ->
+            False
 
 getOpenFrames :
     SelectedFrameTree
     -> List FrameUI
-getOpenFrames (SelectedFrameTree thisFrameUI children) =
-    case thisFrameUI.openedChild of
-        Nothing ->
-            [ thisFrameUI ]
+getOpenFrames selTree =
+    case selTree of
+        Thunk  _ _ ->
+            []
 
-        Just childId ->
-            let
-                isTarget =
-                    TraceData.frameIdsEqual childId
-            in
-            case children |> List.filter (frameIdOf >> isTarget) of
-                [ openChild ] ->
-                    thisFrameUI :: getOpenFrames openChild
+        Concrete (Evaluated thisFrameUI children) ->
+            case thisFrameUI.openedChild of
+                Nothing ->
+                    [ thisFrameUI ]
 
-                [] ->
-                    Debug.log
-                        "ERROR: did not find open child ID in child frames"
-                        [ thisFrameUI ]
-
-                (anOpenChild :: _ :: _) as duplicates ->
+                Just childId ->
                     let
-                        _ =
-                            Debug.log
-                                "ERROR: found duplicate child frames with same ID"
-                                (List.map frameIdOf duplicates)
+                        isTarget =
+                            TraceData.frameIdsEqual childId
                     in
-                    thisFrameUI
-                        :: getOpenFrames anOpenChild
+                    case children |> List.filter (frameIdOf >> isTarget) of
+                        [ openChild ] ->
+                            thisFrameUI :: getOpenFrames openChild
+
+                        [] ->
+                            Debug.log
+                                "ERROR: did not find open child ID in child frames"
+                                [ thisFrameUI ]
+
+                        (anOpenChild :: _ :: _) as duplicates ->
+                            let
+                                _ =
+                                    Debug.log
+                                        "ERROR: found duplicate child frames with same ID"
+                                        (List.map frameIdOf duplicates)
+                            in
+                            thisFrameUI
+                                :: getOpenFrames anOpenChild

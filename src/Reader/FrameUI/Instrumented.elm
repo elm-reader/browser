@@ -1,4 +1,4 @@
-module Reader.FrameUI.Instrumented exposing (viewFrameTrace)
+module Reader.FrameUI.Instrumented exposing (viewFrameTrace, frameToTokens)
 
 {-| Reader.FrameUI.View.Instrumented handles the creation of the clickable,
 highlightable text of a frame.
@@ -13,24 +13,37 @@ import Reader.Msg as Msg exposing (Msg)
 import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.TraceData as TraceData exposing (TraceData)
 import Reader.TraceData.Value as Value exposing (Value)
+import Reader.FrameUI.Token as Token exposing (Token)
+import Array
+import Array exposing (Array)
 
 
 viewFrameTrace :
     SourceMap
     -> Maybe TraceData.ExprWithContext
     -> Maybe TraceData.FrameId
+    -> Maybe (List Token)
     -> TraceData.InstrumentedFrameData
-    -> Result String (Html Msg)
-viewFrameTrace srcMap hoveredExpr openChildFrameId tracedFrame =
-    frameToTokens srcMap tracedFrame.sourceId
-        |> Result.andThen (viewFrameTokens tracedFrame hoveredExpr openChildFrameId)
-        |> Result.map (H.pre [ A.style "margin" "0" ])
+    -> Result String (List Token, Html Msg)
+viewFrameTrace srcMap hoveredExpr openChildFrameId cachedTokens tracedFrame =
+    let
+        tokensResult =
+            case cachedTokens of
+                Just ts ->
+                    Ok ts
 
+                Nothing ->
+                    Debug.log "CALCULATING TOKENS in VIEW" (frameToTokens srcMap tracedFrame.sourceId)
+    in
+    case tokensResult of
+        Ok tokens ->
+            tokens
+                |> viewFrameTokens tracedFrame hoveredExpr openChildFrameId
+                |> Result.map (H.pre [ A.style "margin-top" "3px" ])
+                |> Result.map (\html -> (tokens, html))
 
-type Token
-    = TokenExprStart SourceMap.ExprId -- '<span title="[expr value]">'
-    | TokenExprEnd SourceMap.ExprId -- '</span>'
-    | TokenChar Char -- 'x'
+        Err e ->
+            Err e
 
 
 frameToTokens :
@@ -50,6 +63,9 @@ frameToTokens srcMap frameId =
                 Just src ->
                     Ok (frameSrcToTokens region.start src exprRegions)
 
+thenAppend : Array a -> Array a -> Array a
+thenAppend addendum base =
+    Array.append base addendum
 
 frameSrcToTokens :
     SourceMap.Position
@@ -58,15 +74,9 @@ frameSrcToTokens :
     -> List Token
 frameSrcToTokens initialPos src exprRegions =
     let
-        rconcat : List (List a) -> List a
-        rconcat =
-            List.reverse >> List.concat
-
-        -- TODO: take finalPos instead of initialPos, to change this to use
-        -- String.foldr and avoid the double-reversal
-        ( _, reversedAssociation ) =
+        (_, association) =
             String.foldl
-                (\char ( position, accum ) ->
+                (\char (position, accum) ->
                     let
                         nextPos =
                             if char == '\n' then
@@ -80,25 +90,23 @@ frameSrcToTokens initialPos src exprRegions =
 
                         starts =
                             SourceMap.exprsStartingAt position exprRegions
-                                |> List.map TokenExprStart
+                                |> List.map Token.ExprStart
 
                         ends =
                             SourceMap.exprsEndingAt nextPos exprRegions
-                                |> List.map TokenExprEnd
+                                |> List.map Token.ExprEnd
                     in
                     ( nextPos
-                    , rconcat
-                        [ accum
-                        , starts
-                        , [ TokenChar char ]
-                        , ends
-                        ]
+                    , accum
+                        |> thenAppend (Array.fromList starts)
+                        |> Array.push (Token.Character char)
+                        |> thenAppend (Array.fromList ends)
                     )
                 )
-                ( initialPos, [] )
+                ( initialPos, Array.empty )
                 src
     in
-    List.reverse reversedAssociation
+    Array.toList association
 
 
 viewFrameTokens :
@@ -109,11 +117,11 @@ viewFrameTokens :
     -> Result String (List (Html Msg))
 viewFrameTokens frameTrace hoveredExpr openChildFrameId tokens =
     case tokens of
-        (TokenChar ch) :: rest ->
+        (Token.Character ch) :: rest ->
             viewFrameTokens frameTrace hoveredExpr openChildFrameId rest
                 |> Result.map (\restHtml -> H.text (String.fromChar ch) :: restHtml)
 
-        (TokenExprStart exprId) :: rest ->
+        (Token.ExprStart exprId) :: rest ->
             let
                 exprRenderingContext =
                     { frameTrace = frameTrace
@@ -130,8 +138,8 @@ viewFrameTokens frameTrace hoveredExpr openChildFrameId tokens =
                 Err e ->
                     Err (e ++ "\n All tokens were:" ++ Debug.toString tokens)
 
-        (TokenExprEnd exprId) :: rest ->
-            Err ("unexpected TokenExprEnd [\n  " ++ (String.join ",\n  " <| List.map Debug.toString tokens))
+        (Token.ExprEnd exprId) :: rest ->
+            Err ("unexpected Token.ExprEnd [\n  " ++ (String.join ",\n  " <| List.map Debug.toString tokens))
 
         [] ->
             Ok []
@@ -146,7 +154,7 @@ type alias ExprRenderingContext =
 
 
 {-| takeExprTokensToHtml parses a token stream to Html, processing up to the end of
-`context.currentExpr` (i.e. until the token `TokenExprEnd context.currentExpr`),
+`context.currentExpr` (i.e. until the token `Token.ExprEnd context.currentExpr`),
 and returns a list of Html items in that expression as well as the list of unconsumed tokens.
 -}
 takeExprTokensToHtml :
@@ -158,7 +166,7 @@ takeExprTokensToHtml context tokens =
         [] ->
             Err "unexpected end of stream"
 
-        (TokenChar ch) :: restTokens ->
+        (Token.Character ch) :: restTokens ->
             takeExprTokensToHtml context restTokens
                 |> Result.map
                     (\( restHtmlInContext, tokensAfterContext ) ->
@@ -167,7 +175,7 @@ takeExprTokensToHtml context tokens =
                         )
                     )
 
-        (TokenExprStart hereExprId) :: restTokens ->
+        (Token.ExprStart hereExprId) :: restTokens ->
             let
                 ( maybeExprData, exprTitle ) =
                     case Dict.lookup hereExprId context.frameTrace.exprs of
@@ -177,7 +185,7 @@ takeExprTokensToHtml context tokens =
                             )
 
                         Just expr ->
-                            case expr.value of
+                            case TraceData.exprValue expr of
                                 Just val ->
                                     ( Just
                                         { frameSrcId = context.frameTrace.sourceId
@@ -216,12 +224,12 @@ takeExprTokensToHtml context tokens =
                                 )
                     )
 
-        (TokenExprEnd closingExprId) :: restTokens ->
+        (Token.ExprEnd closingExprId) :: restTokens ->
             if closingExprId == context.currentExpr then
                 Ok ( [], restTokens )
             else
                 Err
-                    ("Unexpected TokenExprEnd: "
+                    ("Unexpected Token.ExprEnd: "
                         ++ Debug.toString closingExprId
                         ++ ", restTokens: "
                         ++ Debug.toString restTokens
@@ -254,7 +262,7 @@ highlightsFor context maybeExprData =
             [ Untraced ]
 
         Just exprData ->
-            highlightsForOpenedCall context exprData.expr.childFrame
+            highlightsForOpenedCall context (TraceData.exprChildFrame exprData.expr)
                 ++ highlightsForHovered context exprData.exprId
 
 highlightsForOpenedCall : ExprRenderingContext -> Maybe TraceData.Frame -> Highlights
@@ -351,7 +359,7 @@ handleMouseOut =
 handleClick exprData =
     let
         ( msg, cursor ) =
-            case exprData.expr.childFrame of
+            case TraceData.exprChildFrame exprData.expr of
                 Nothing ->
                     ( Msg.NoOp, "default" )
 
