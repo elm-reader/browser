@@ -33,7 +33,7 @@ viewFrameTrace srcMap hoveredExpr openChildFrameId cachedTokens tracedFrame =
                     Ok ts
 
                 Nothing ->
-                    Debug.log "CALCULATING TOKENS in VIEW" (frameToTokens srcMap tracedFrame.sourceId)
+                    (frameToTokens srcMap tracedFrame.sourceId)
     in
     case tokensResult of
         Ok tokens ->
@@ -74,7 +74,7 @@ frameSrcToTokens :
     -> List Token
 frameSrcToTokens initialPos src exprRegions =
     let
-        (_, association) =
+        (finalPosition, streamWithoutFinalEndings) =
             String.foldl
                 (\char (position, accum) ->
                     let
@@ -93,20 +93,26 @@ frameSrcToTokens initialPos src exprRegions =
                                 |> List.map Token.ExprStart
 
                         ends =
-                            SourceMap.exprsEndingAt nextPos exprRegions
+                            SourceMap.exprsEndingAt position exprRegions
                                 |> List.map Token.ExprEnd
                     in
                     ( nextPos
                     , accum
+                        |> thenAppend (Array.fromList ends)
                         |> thenAppend (Array.fromList starts)
                         |> Array.push (Token.Character char)
-                        |> thenAppend (Array.fromList ends)
                     )
                 )
                 ( initialPos, Array.empty )
                 src
+
+        finalEndings =
+            SourceMap.exprsEndingAt finalPosition exprRegions
+                |> List.map Token.ExprEnd
+
+        tokenStream = Array.append streamWithoutFinalEndings (Array.fromList finalEndings)
     in
-    Array.toList association
+    Array.toList tokenStream
 
 
 viewFrameTokens :

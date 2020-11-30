@@ -32,7 +32,7 @@ isCtrTuple name =
 
 
 toString : Value -> String
-toString (Value x) = Debug.toString x -- FIXME to be "<value>"
+toString (Value x) = "<value>" -- Debug.toString x -- FIXME to be "<value>"
 
 decode : JD.Decoder Value
 decode = JD.map Value JD.value

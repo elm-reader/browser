@@ -319,4 +319,4 @@ viewTraceWindow width sources hoveredExpr maybeTrace =
                         |> SelectedFrameTree.getOpenFrames
                         |> List.map (FrameUI.view sources hoveredExpr)
             in
-            Elm.Kernel.Reader.log "in Just branch" (container childTraces)
+            container childTraces

@@ -18,18 +18,6 @@ type SelectedFrameTree
     | Concrete Evaluated
 
 
-type Evaluated = Evaluated FrameUI (List SelectedFrameTree)
-
-
-evaluate : SelectedFrameTree -> Evaluated
-evaluate sft =
-    case sft of
-        Thunk _ thunk ->
-            fromEvaluatedTrace (thunk ())
-
-        Concrete frame ->
-            frame
-
 fromTrace : TraceData.Frame -> SelectedFrameTree
 fromTrace frame =
     case frame of
@@ -39,11 +27,6 @@ fromTrace frame =
         _ ->
             Concrete (fromEvaluatedTrace frame)
 
-fromEvaluatedTrace : TraceData.Frame -> Evaluated
-fromEvaluatedTrace frame =
-    Evaluated
-        (FrameUI.fromTrace frame)
-        (List.map fromTrace (TraceData.childFrames frame))
 
 frameIdOf : SelectedFrameTree -> TraceData.FrameId
 frameIdOf sft =
@@ -55,11 +38,26 @@ frameIdOf sft =
             TraceData.frameIdOf frameUI.frame
 
 
-evaluateWithTokens : SourceMap -> SelectedFrameTree -> Evaluated
-evaluateWithTokens srcMap sft =
+type Evaluated = Evaluated FrameUI (List SelectedFrameTree)
+
+
+fromEvaluatedTrace : TraceData.Frame -> Evaluated
+fromEvaluatedTrace frame =
+    Evaluated
+        (FrameUI.fromTrace frame)
+        (List.map fromTrace (TraceData.childFrames frame))
+
+
+evaluate : SourceMap -> SelectedFrameTree -> Evaluated
+evaluate srcMap sft =
     let
         (Evaluated frameUI children) =
-            evaluate sft
+            case sft of
+                Thunk _ thunk ->
+                    fromEvaluatedTrace (thunk ())
+
+                Concrete frame ->
+                    frame
 
         newFrameUI =
             { frameUI
@@ -90,7 +88,7 @@ openFrame childFrameId sources =
 
         openFrameIn selTree =
             if isTarget selTree then
-                Concrete (evaluateWithTokens sources selTree)
+                Concrete (evaluate sources selTree)
             else
                 let
                     combine sf ( newChild, restChildren ) =
@@ -101,7 +99,7 @@ openFrame childFrameId sources =
                         else
                             ( newChild, sf :: restChildren )
 
-                    (Evaluated frameUI children) = evaluateWithTokens sources selTree
+                    (Evaluated frameUI children) = evaluate sources selTree
 
                     ( maybeNewOpenChild, newChildren ) =
                         List.foldr combine ( Nothing, [] ) children
@@ -115,15 +113,6 @@ openFrame childFrameId sources =
                     )
     in
     openFrameIn
-
-isJust : Maybe a -> Bool
-isJust maybe =
-    case maybe of
-        Just _ ->
-            True
-
-        Nothing ->
-            False
 
 getOpenFrames :
     SelectedFrameTree

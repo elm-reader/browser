@@ -13,6 +13,8 @@ import Reader exposing (ModeBrowse, ModeDebug, update, view, parseConfig, parseS
 
 */
 
+// _Reader_impl is the application specification for when the reader runs as a standalone application,
+// i.e. when the mode (in Reader.elm) is ModeBrowse, and the reader applied to initialization code.
 var _Reader_impl = function (debugData) {
   var programData = Object.assign({}, debugData, {traces: _Reader_contextJSON()});
   console.info("Program data:", programData);
@@ -162,7 +164,11 @@ var _Reader_context = {
 var _Reader_contextDepth = 0;
 
 var _Reader_recordExpr = F2(function (exprId, val) {
-  if (_Reader_context.$ === __1_NO_RECORD) {
+  if (_Reader_context.$ === __1_NO_RECORD || (_Reader_context.__exprs && exprId in _Reader_context.__exprs)) {
+    // TODO: remove the latter condition, and instead
+    // change the instrumentation to stop executing recordExpr on values
+    // in let bindings which already got recordCall'd (this extra recordExpr
+    // overwrites the __childFrame with null).
     return val;
   }
   if (_Reader_context.$ === __1_INSTRUMENTED_FRAME) {
@@ -217,8 +223,7 @@ var _Reader_recordCall = F3(function (exprId, func, body) {
           return A3(_Reader_thunkExec, func, body, childFrameId);
         },
       };
-    }
-    else {
+    } else {
       newContext = {
         $: __1_NON_INSTRUMENTED_FRAME,
         __childFrames: [],

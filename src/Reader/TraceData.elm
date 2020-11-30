@@ -69,7 +69,7 @@ frameIdToString (FrameId uid ancestors) =
         ++ String.fromInt uid
         ++ " (ancestors: ["
         ++ String.join ", " (List.map String.fromInt ancestors)
-        ++ ")]"
+        ++ "])"
 
 
 type alias InstrumentedFrameData =
