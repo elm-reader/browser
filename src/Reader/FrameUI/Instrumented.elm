@@ -67,6 +67,53 @@ thenAppend : Array a -> Array a -> Array a
 thenAppend addendum base =
     Array.append base addendum
 
+thenMaybePush : Maybe a -> Array a -> Array a
+thenMaybePush addendum base =
+    case addendum of
+        Just elem ->
+            Array.push elem base
+
+        Nothing ->
+            base
+
+tokenGenerationIterator exprRegions src =
+    \char { position, idx, tokenStart, tokenStream } ->
+        let
+            nextPos =
+                if char == '\n' then
+                    { line = position.line + 1
+                    , col = 1
+                    }
+                else
+                    { line = position.line
+                    , col = position.col + 1
+                    }
+
+            starts =
+                SourceMap.exprsStartingAt position exprRegions
+                    |> List.map Token.ExprStart
+
+            ends =
+                SourceMap.exprsEndingAt position exprRegions
+                    |> List.map Token.ExprEnd
+
+            (priorToken, nextTokenStart) =
+                if not (List.isEmpty starts && List.isEmpty ends) then
+                    (Just <| Token.Text <| String.slice tokenStart idx src, idx)
+                else
+                    (Nothing, tokenStart)
+        in
+        { position = nextPos
+        , idx = idx + 1
+        , tokenStart = nextTokenStart
+        , tokenStream =
+            tokenStream
+                |> thenMaybePush priorToken
+                |> thenAppend (Array.fromList ends)
+                |> thenAppend (Array.fromList starts)
+        }
+
+
 frameSrcToTokens :
     SourceMap.Position
     -> String
@@ -74,43 +121,12 @@ frameSrcToTokens :
     -> List Token
 frameSrcToTokens initialPos src exprRegions =
     let
-        (finalPosition, streamWithoutFinalEndings) =
-            String.foldl
-                (\char (position, accum) ->
-                    let
-                        nextPos =
-                            if char == '\n' then
-                                { line = position.line + 1
-                                , col = 1
-                                }
-                            else
-                                { line = position.line
-                                , col = position.col + 1
-                                }
-
-                        starts =
-                            SourceMap.exprsStartingAt position exprRegions
-                                |> List.map Token.ExprStart
-
-                        ends =
-                            SourceMap.exprsEndingAt position exprRegions
-                                |> List.map Token.ExprEnd
-                    in
-                    ( nextPos
-                    , accum
-                        |> thenAppend (Array.fromList ends)
-                        |> thenAppend (Array.fromList starts)
-                        |> Array.push (Token.Character char)
-                    )
-                )
-                ( initialPos, Array.empty )
+        { tokenStream } =
+            String.foldl (tokenGenerationIterator exprRegions src)
+                { position = initialPos, idx = 0, tokenStart = 0, tokenStream = Array.empty }
                 src
-
-        finalEndings =
-            SourceMap.exprsEndingAt finalPosition exprRegions
-                |> List.map Token.ExprEnd
-
-        tokenStream = Array.append streamWithoutFinalEndings (Array.fromList finalEndings)
+                -- Run through tokenGenerationIterator once more to capture the last token; 'X' is arbitrary
+                |> tokenGenerationIterator exprRegions src 'X'
     in
     Array.toList tokenStream
 
@@ -123,9 +139,9 @@ viewFrameTokens :
     -> Result String (List (Html Msg))
 viewFrameTokens frameTrace hoveredExpr openChildFrameId tokens =
     case tokens of
-        (Token.Character ch) :: rest ->
+        (Token.Text txt) :: rest ->
             viewFrameTokens frameTrace hoveredExpr openChildFrameId rest
-                |> Result.map (\restHtml -> H.text (String.fromChar ch) :: restHtml)
+                |> Result.map (\restHtml -> H.text txt :: restHtml)
 
         (Token.ExprStart exprId) :: rest ->
             let
@@ -158,6 +174,14 @@ type alias ExprRenderingContext =
     , openChildFrameId : Maybe TraceData.FrameId
     }
 
+isJust : Maybe a -> Bool
+isJust maybe =
+    case maybe of
+        Just _ ->
+            True
+
+        Nothing ->
+            False
 
 {-| takeExprTokensToHtml parses a token stream to Html, processing up to the end of
 `context.currentExpr` (i.e. until the token `Token.ExprEnd context.currentExpr`),
@@ -172,11 +196,11 @@ takeExprTokensToHtml context tokens =
         [] ->
             Err "unexpected end of stream"
 
-        (Token.Character ch) :: restTokens ->
+        (Token.Text txt) :: restTokens ->
             takeExprTokensToHtml context restTokens
                 |> Result.map
                     (\( restHtmlInContext, tokensAfterContext ) ->
-                        ( H.text (String.fromChar ch) :: restHtmlInContext
+                        ( H.text txt :: restHtmlInContext
                         , tokensAfterContext
                         )
                     )
@@ -207,13 +231,13 @@ takeExprTokensToHtml context tokens =
                                     , "<no value associated with this expr in trace frame. exprID is " ++ Debug.toString hereExprId ++ " expr is " ++ Debug.toString expr ++ ">"
                                     )
 
-                highlights =
-                    highlightsFor context maybeExprData
+                styleClasses =
+                    styleClassesFor context maybeExprData
 
                 exprOptions =
                     { title = exprTitle
                     , maybeExprData = maybeExprData
-                    , highlights = highlights
+                    , styleClasses = styleClasses
                     , contents = [] -- to be filled in below
                     }
             in
@@ -247,111 +271,60 @@ takeExprTokensToHtml context tokens =
 type alias ExprOptions =
     { title : String
     , maybeExprData : Maybe TraceData.ExprWithContext
-    , highlights : Highlights
+    , styleClasses : StyleClasses
     , contents : List (Html Msg)
     }
 
 
-type Highlight
-    = Hovered
-    -- for expressions with no recorded trace value:
-    | Untraced
-    -- for expressions whose child frames are open in the UI:
-    | OpenedCall
+type alias StyleClasses = List String
 
-type alias Highlights = List Highlight
-
-highlightsFor : ExprRenderingContext -> Maybe TraceData.ExprWithContext -> Highlights
-highlightsFor context maybeExprData =
+styleClassesFor : ExprRenderingContext -> Maybe TraceData.ExprWithContext -> StyleClasses
+styleClassesFor context maybeExprData =
     case maybeExprData of
         Nothing ->
-            [ Untraced ]
+            [ "elm-reader-untraced" ]
 
         Just exprData ->
-            highlightsForOpenedCall context (TraceData.exprChildFrame exprData.expr)
-                ++ highlightsForHovered context exprData.exprId
-
-highlightsForOpenedCall : ExprRenderingContext -> Maybe TraceData.Frame -> Highlights
-highlightsForOpenedCall {openChildFrameId} maybeChildFrame =
-    case (openChildFrameId, maybeChildFrame) of
-        (Just idOfOpened, Just childFrame) ->
-            if idOfOpened == TraceData.frameIdOf childFrame then
-                [ OpenedCall ]
-            else
-                []
-
-        _ ->
-            []
-
-
-highlightsForHovered : ExprRenderingContext -> SourceMap.ExprId -> Highlights
-highlightsForHovered context hereExprId =
-    case context.hoveredExpr of
-        Just hovered ->
             let
                 isHovered =
-                    (hovered.frameSrcId == context.frameTrace.sourceId)
-                        && (hovered.exprId == hereExprId)
-                        && (hovered.stackFrameId == context.frameTrace.runtimeId)
+                    case context.hoveredExpr of
+                        Nothing ->
+                            False
+
+                        Just hovered ->
+                            TraceData.frameIdsEqual hovered.stackFrameId context.frameTrace.runtimeId
+                                -- FIXME: necessary? && hovered.frameSrcId == context.frameTrace.sourceId
+                                && hovered.exprId == exprData.exprId
             in
-            if isHovered then
-                [ Hovered ]
-            else
-                []
+            case TraceData.exprChildFrame exprData.expr of
+                Nothing ->
+                    [ "elm-reader-expr" ]
+                        ++ (if isHovered then [ "elm-reader-expr--hovered" ] else [])
 
-        Nothing ->
-            []
-
-
-baseStyle =
-    [ A.style "border-radius" "3px"
-    , A.style "padding" "1px"
-    , A.style "margin" "1px"
-    ]
-
-
-highlightStyles hs =
-    let
-        border =
-            [ A.style "border" "1px solid #51d59d"
-            , A.style "margin" "0px !important"
-            ]
-    in
-    case hs of
-        Hovered ->
-            [ A.style "background-color" "rgb(230, 230, 200)" ]
-
-        Untraced ->
-            [ A.style "text-decoration" "line-through"
-            ]
-
-        OpenedCall ->
-            [ A.style "border" ""
-            ]
-                ++ border
+                Just childFrame ->
+                    let
+                        isOpened =
+                            context.openChildFrameId == Just (TraceData.frameIdOf childFrame)
+                    in
+                    [ "elm-reader-expr", "elm-reader-call" ]
+                        ++ (if isHovered then ["elm-reader-expr--hovered"] else [])
+                        ++ (if isOpened then ["elm-reader-call--opened"] else [])
 
 
 exprElem : ExprOptions -> Html Msg
-exprElem { title, maybeExprData, highlights, contents } =
+exprElem { title, maybeExprData, styleClasses, contents } =
     let
         handlers =
             case maybeExprData of
                 Nothing ->
-                    [ E.stopPropagationOn "mouseover" (JD.succeed ( Msg.UnHoverExpr, True ))
-                    , E.stopPropagationOn "click" (JD.succeed ( Msg.NoOp, True ))
-                    ]
+                    []
 
                 Just exprData ->
-                    handleMouseOut
-                        :: handleMouseOver exprData
-                        :: handleClick exprData
+                    [ handleMouseOut, handleMouseOver exprData ]
+                        ++ handleClick exprData
     in
     H.span
-        (List.concatMap highlightStyles highlights
-            ++ handlers
-            ++ baseStyle
-            ++ [ A.title title ]
-        )
+        (handlers ++ List.map A.class styleClasses)
         contents
 
 handleMouseOver exprData =
@@ -363,17 +336,12 @@ handleMouseOut =
         (JD.succeed ( Msg.UnHoverExpr, True ))
 
 handleClick exprData =
-    let
-        ( msg, cursor ) =
-            case TraceData.exprChildFrame exprData.expr of
-                Nothing ->
-                    ( Msg.NoOp, "default" )
+    case TraceData.exprChildFrame exprData.expr of
+        Nothing ->
+            [ E.stopPropagationOn "click" (JD.succeed ( Msg.NoOp, True )) ]
 
-                Just childFrame ->
-                    ( Msg.OpenChildFrame (TraceData.frameIdOf childFrame)
-                    , "pointer"
-                    )
-    in
-    [ E.stopPropagationOn "click" (JD.succeed ( msg, True ))
-    , A.style "cursor" cursor
-    ]
+        Just childFrame ->
+            [ E.stopPropagationOn
+                "click"
+                (JD.succeed ( Msg.OpenChildFrame (TraceData.frameIdOf childFrame), True ))
+            ]

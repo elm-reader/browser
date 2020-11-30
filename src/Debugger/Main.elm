@@ -511,4 +511,28 @@ resumeStyle = """
   background-color: rgb(41, 41, 41);
 }
 
+.elm-reader-expr {
+  cursor: default;
+  border-radius: 3px;
+  padding: 1px;
+  margin: 1px;
+}
+
+.elm-reader-expr--hovered {
+  background-color: rgb(230, 230, 200);
+}
+
+.elm-reader-call {
+  cursor: pointer;
+}
+
+.elm-reader-call--opened {
+  border: 1px solid #51d59d;
+  margin: 0;
+}
+
+.elm-reader-untraced {
+  text-decoration: line-through;
+}
+
 """
