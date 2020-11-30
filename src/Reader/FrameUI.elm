@@ -45,55 +45,34 @@ view srcMap hoveredExpr frameUI =
                 ]
 
         TraceData.InstrumentedFrame tracedFrame ->
-            let
-                maybeFrame =
-                    Dict.lookup tracedFrame.sourceId srcMap.frames
+            case Instrumented.viewFrameTrace srcMap hoveredExpr frameUI.openedChild frameUI.tokens tracedFrame of
+                Ok (_, frameTraceHtml) ->
+                    frameContainerElem [ frameTraceHtml ]
 
-                maybeRegionSource =
-                    maybeFrame
-                        |> Maybe.map .region
-                        |> Maybe.andThen (\region -> SourceMap.lookupRegionSource region srcMap.sources)
-            in
-            case Maybe.map2 Tuple.pair maybeFrame maybeRegionSource of
-                Just ( frame, src ) ->
-                    let
-                        content =
-                            case Instrumented.viewFrameTrace srcMap hoveredExpr frameUI.openedChild frameUI.tokens tracedFrame of
-                                Err e ->
-                                    H.div []
-                                        [ H.p [ A.style "font-weight" "bold" ] [ H.text "Got error:" ]
-                                        , fmtErr e
-                                        , H.p [ A.style "font-weight" "bold" ] [ H.text "Parsing this frame's trace:" ]
-                                        , H.pre [] [ H.text src ]
-                                        ]
-
-                                Ok (_, frameTraceHtml) ->
-                                    frameTraceHtml
-
-                        headerMsg =
-                            H.div
-                                [ A.style "font-size" "0.7em"  ]
-                                [ H.text "Instrumented frame (sourceId: "
-                                , H.code [] [ H.text (SourceMap.frameIdToString tracedFrame.sourceId) ]
-                                , H.text ", runtimeId: "
-                                , H.code [] [ H.text (TraceData.frameIdToString tracedFrame.runtimeId) ]
-                                , H.text ")"
+                Err e ->
+                    let maybeSource =
+                            Dict.lookup tracedFrame.sourceId srcMap.frames
+                                |> Maybe.map .region
+                                |> Maybe.andThen (\region -> SourceMap.lookupRegionSource region srcMap.sources)
+                    in
+                    case maybeSource of
+                        Just src ->
+                            H.div []
+                                [ H.p [ A.style "font-weight" "bold" ] [ H.text "Got error:" ]
+                                , fmtErr e
+                                , H.p [ A.style "font-weight" "bold" ] [ H.text "Parsing this frame's trace:" ]
+                                , H.pre [] [ H.text src ]
                                 ]
-                    in
-                    frameContainerElem <|
-                        [ headerMsg
-                        , content
-                        ]
 
-                Nothing ->
-                    let
-                        errMsg =
-                            "failed to find frame region! id: "
-                                ++ Debug.toString tracedFrame.sourceId
-                                ++ "\nsrcMap: "
-                                ++ Debug.toString srcMap
-                    in
-                    frameContainerElem [ H.pre [] [ H.text errMsg ] ]
+                        Nothing ->
+                            let
+                                errMsg =
+                                    "failed to find frame region! id: "
+                                        ++ Debug.toString tracedFrame.sourceId
+                                        ++ "\nsrcMap: "
+                                        ++ Debug.toString srcMap
+                            in
+                            frameContainerElem [ H.pre [] [ H.text errMsg ] ]
 
         TraceData.FrameThunk id thunk ->
            frameContainerElem [ H.text ("Thunk frame with id " ++ TraceData.frameIdToString id) ]
