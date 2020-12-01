@@ -107,9 +107,5 @@ viewNonInstrumented srcMap childFrames hoveredExprId =
 frameContainerElem : List (Html msg) -> Html msg
 frameContainerElem items =
     H.div
-        [ A.style "border" "1px solid green"
-        , A.style "padding" "3px"
-        , A.style "border-radius" "4px"
-        , A.style "margin-bottom" "6px"
-        ]
+        [ A.class "elm-reader-frame" ]
         items

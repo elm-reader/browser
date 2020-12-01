@@ -258,7 +258,7 @@ viewAfterInit { sources, tracesOutline, hoveredExpr, selectedFrames, mode } =
             ]
             (outlineSidebar
                 ++ [ viewTraceWindow (A.style "flex" "5") sources hoveredExpr selectedFrames
-                   , viewDetailsSidebar [ A.style "flex" "3" ] hoveredExpr
+                   , div [ A.style "flex" "3" ] [ viewDetailsSidebar [ A.style "position" "fixed" ] hoveredExpr ]
                    ]
             )
 

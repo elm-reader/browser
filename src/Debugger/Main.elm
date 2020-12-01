@@ -519,7 +519,7 @@ resumeStyle = """
 }
 
 .elm-reader-expr--hovered {
-  background-color: rgb(230, 230, 200);
+  background-color: rgb(230, 230, 200) !important;
 }
 
 .elm-reader-call {
@@ -527,12 +527,20 @@ resumeStyle = """
 }
 
 .elm-reader-call--opened {
-  border: 1px solid #51d59d;
+  background-color: rgb(255,255,250);
+  box-shadow: 0px 0px 1px 1px #ddc;
   margin: 0;
 }
 
 .elm-reader-untraced {
-  text-decoration: line-through;
+  color: rgba(155, 155, 155);
 }
 
+.elm-reader-frame {
+  padding: 3px;
+  margin: 6px;
+  border-radius: 4px;
+  box-shadow: 2px 2px 2px 2px #ccc;
+  background-color: rgb(253, 253, 253);
+}
 """
