@@ -17,13 +17,15 @@ import Reader.FrameUI.Token as Token exposing (Token)
 import Reader.Msg as Msg exposing (Msg)
 import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.TraceData as TraceData exposing (TraceData)
+import Array
+import Array exposing (Array)
 
 -- MODEL
 
 type alias FrameUI =
     { frame : TraceData.Frame
     , openedChild : Maybe TraceData.FrameId
-    , tokens : Maybe (List Token)
+    , tokens : Maybe (Array Token)
     }
 
 fromTrace : TraceData.Frame -> FrameUI

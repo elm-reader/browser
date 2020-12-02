@@ -22,9 +22,9 @@ viewFrameTrace :
     SourceMap
     -> Maybe TraceData.ExprWithContext
     -> Maybe TraceData.FrameId
-    -> Maybe (List Token)
+    -> Maybe (Array Token)
     -> TraceData.InstrumentedFrameData
-    -> Result String (List Token, Html Msg)
+    -> Result String (Array Token, Html Msg)
 viewFrameTrace srcMap hoveredExpr openChildFrameId cachedTokens tracedFrame =
     let
         tokensResult =
@@ -38,7 +38,7 @@ viewFrameTrace srcMap hoveredExpr openChildFrameId cachedTokens tracedFrame =
     case tokensResult of
         Ok tokens ->
             tokens
-                |> viewFrameTokens tracedFrame hoveredExpr openChildFrameId
+                |> viewFrameTokens tracedFrame hoveredExpr openChildFrameId 0
                 |> Result.map (H.pre [ A.style "margin-top" "3px" ])
                 |> Result.map (\html -> (tokens, html))
 
@@ -49,7 +49,7 @@ viewFrameTrace srcMap hoveredExpr openChildFrameId cachedTokens tracedFrame =
 frameToTokens :
     SourceMap
     -> SourceMap.FrameId
-    -> Result String (List Token)
+    -> Result String (Array Token)
 frameToTokens srcMap frameId =
     case Dict.lookup frameId srcMap.frames of
         Nothing ->
@@ -118,7 +118,7 @@ frameSrcToTokens :
     SourceMap.Position
     -> String
     -> Dict SourceMap.ExprId (List SourceMap.Region)
-    -> List Token
+    -> Array Token
 frameSrcToTokens initialPos src exprRegions =
     let
         { tokenStream } =
@@ -128,22 +128,41 @@ frameSrcToTokens initialPos src exprRegions =
                 -- Run through tokenGenerationIterator once more to capture the last token; 'X' is arbitrary
                 |> tokenGenerationIterator exprRegions src 'X'
     in
-    Array.toList tokenStream
+    tokenStream
+
+
+joinArray : String -> Array String -> String
+joinArray sep entries =
+    Maybe.withDefault
+        ""
+        (Array.foldl
+            (\entry result ->
+                case result of
+                    Just accum ->
+                        Just (accum ++ sep ++ entry)
+
+                    Nothing ->
+                        Just entry
+            )
+            Nothing
+            entries
+        )
 
 
 viewFrameTokens :
-    TraceData.InstrumentedFrameData
-    -> Maybe TraceData.ExprWithContext
-    -> Maybe TraceData.FrameId
-    -> List Token
+    TraceData.InstrumentedFrameData -- frameTrace
+    -> Maybe TraceData.ExprWithContext -- hoveredExpr
+    -> Maybe TraceData.FrameId -- openChildFrameId
+    -> Int -- idx, index into tokens from which to read
+    -> Array Token -- tokens
     -> Result String (List (Html Msg))
-viewFrameTokens frameTrace hoveredExpr openChildFrameId tokens =
-    case tokens of
-        (Token.Text txt) :: rest ->
-            viewFrameTokens frameTrace hoveredExpr openChildFrameId rest
+viewFrameTokens frameTrace hoveredExpr openChildFrameId idx tokens =
+    case Array.get idx tokens of
+        Just (Token.Text txt) ->
+            viewFrameTokens frameTrace hoveredExpr openChildFrameId (idx + 1) tokens
                 |> Result.map (\restHtml -> H.text txt :: restHtml)
 
-        (Token.ExprStart exprId) :: rest ->
+        Just (Token.ExprStart exprId) ->
             let
                 exprRenderingContext =
                     { frameTrace = frameTrace
@@ -152,18 +171,18 @@ viewFrameTokens frameTrace hoveredExpr openChildFrameId tokens =
                     , openChildFrameId = openChildFrameId
                     }
             in
-            case takeExprTokensToHtml exprRenderingContext rest of
-                Ok ( htmlItems, tokensAfterExpr ) ->
-                    viewFrameTokens frameTrace hoveredExpr openChildFrameId tokensAfterExpr
+            case takeExprTokensToHtml exprRenderingContext (idx + 1) tokens of
+                Ok ( htmlItems, idxAfterExpr ) ->
+                    viewFrameTokens frameTrace hoveredExpr openChildFrameId idxAfterExpr tokens
                         |> Result.map (\restHtml -> htmlItems ++ restHtml)
 
                 Err e ->
                     Err (e ++ "\n All tokens were:" ++ Debug.toString tokens)
 
-        (Token.ExprEnd exprId) :: rest ->
-            Err ("unexpected Token.ExprEnd [\n  " ++ (String.join ",\n  " <| List.map Debug.toString tokens))
+        Just (Token.ExprEnd _) ->
+            Err ("unexpected Token.ExprEnd [\n  " ++ (joinArray ",\n  " <| Array.map Debug.toString tokens))
 
-        [] ->
+        Nothing ->
             Ok []
 
 
@@ -189,23 +208,24 @@ and returns a list of Html items in that expression as well as the list of uncon
 -}
 takeExprTokensToHtml :
     ExprRenderingContext
-    -> List Token
-    -> Result String ( List (Html Msg), List Token )
-takeExprTokensToHtml context tokens =
-    case tokens of
-        [] ->
+    -> Int -- idx, index into tokens from which to read
+    -> Array Token -- tokens
+    -> Result String ( List (Html Msg), Int )
+takeExprTokensToHtml context idx tokens =
+    case Array.get idx tokens of
+        Nothing ->
             Err "unexpected end of stream"
 
-        (Token.Text txt) :: restTokens ->
-            takeExprTokensToHtml context restTokens
+        Just (Token.Text txt) ->
+            takeExprTokensToHtml context (idx + 1) tokens
                 |> Result.map
-                    (\( restHtmlInContext, tokensAfterContext ) ->
+                    (\( restHtmlInContext, idxAfterExpr ) ->
                         ( H.text txt :: restHtmlInContext
-                        , tokensAfterContext
+                        , idxAfterExpr
                         )
                     )
 
-        (Token.ExprStart hereExprId) :: restTokens ->
+        Just (Token.ExprStart hereExprId) ->
             let
                 ( maybeExprData, exprTitle ) =
                     case Dict.lookup hereExprId context.frameTrace.exprs of
@@ -241,28 +261,30 @@ takeExprTokensToHtml context tokens =
                     , contents = [] -- to be filled in below
                     }
             in
-            takeExprTokensToHtml { context | currentExpr = hereExprId } restTokens
+            takeExprTokensToHtml { context | currentExpr = hereExprId } (idx + 1) tokens
                 |> Result.andThen
-                    (\( htmlItemsHere, tokensAfterHereExpr ) ->
-                        takeExprTokensToHtml context tokensAfterHereExpr
+                    (\( htmlItemsHere, idxAfterHereExpr ) ->
+                        takeExprTokensToHtml context idxAfterHereExpr tokens
                             |> Result.map
-                                (\( htmlItemsAfterHere, tokensAfterContext ) ->
+                                (\( htmlItemsAfterHere, idxAfterContext ) ->
                                     ( exprElem { exprOptions | contents = htmlItemsHere }
                                         :: htmlItemsAfterHere
-                                    , tokensAfterContext
+                                    , idxAfterContext
                                     )
                                 )
                     )
 
-        (Token.ExprEnd closingExprId) :: restTokens ->
+        Just (Token.ExprEnd closingExprId) ->
             if closingExprId == context.currentExpr then
-                Ok ( [], restTokens )
+                Ok ( [], idx + 1 )
             else
                 Err
-                    ("Unexpected Token.ExprEnd: "
+                    ("Unexpected Token.ExprEnd "
                         ++ Debug.toString closingExprId
-                        ++ ", restTokens: "
-                        ++ Debug.toString restTokens
+                        ++ " at index "
+                        ++ String.fromInt idx
+                        ++ " in tokens array: "
+                        ++ Debug.toString tokens
                     )
 
 
