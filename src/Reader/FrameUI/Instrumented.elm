@@ -39,7 +39,7 @@ viewFrameTrace srcMap hoveredExpr openChildFrameId cachedTokens tracedFrame =
         Ok tokens ->
             tokens
                 |> viewFrameTokens tracedFrame hoveredExpr openChildFrameId 0
-                |> Result.map (H.pre [ A.style "margin-top" "3px" ])
+                |> Result.map (H.pre [ A.style "margin" "3px" ])
                 |> Result.map (\html -> (tokens, html))
 
         Err e ->
