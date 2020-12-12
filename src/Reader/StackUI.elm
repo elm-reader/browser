@@ -281,6 +281,37 @@ deadExprsCSSRule = """ {
 }
 """
 
+functionCallExprsCSSRule = """ {
+    cursor: pointer;
+}
+"""
+
+openFunctionCallExprsCSSRule = """ {
+  border-radius: 3px;
+  background-color: rgb(255,255,250);
+  box-shadow: 0px 0px 1px 1px #ddc;
+}
+"""
+
+cssRuleForExprs : List ( TraceData.FrameId, SourceMap.ExprId ) -> String -> List (Html msg)
+cssRuleForExprs exprs rule =
+    if List.isEmpty exprs then
+        []
+    else
+        let
+            selector =
+                List.map
+                    (\(TraceData.FrameId frameId _, SourceMapIds.ExprId exprId) ->
+                        ".elm-reader-frame-"
+                            ++ String.fromInt frameId
+                            ++ " .elm-reader-expr-"
+                            ++ String.fromInt exprId
+                    )
+                    exprs
+                |> String.join ", "
+        in
+        [ Html.text selector, Html.text rule ]
+
 viewStyle : StackUI -> List (Html msg)
 viewStyle stackUI =
     -- TODO:
@@ -301,6 +332,28 @@ viewStyle stackUI =
                                 ++ String.fromInt exprId
                     in
                     [ Html.text selector, Html.text previewedExprCSSRule ]
+
+        functionCallExprs =
+            StackTree.map
+                (\openFrame ->
+                    case OpenFrame.frameIdsOf openFrame of
+                        Just ( _, runtimeId ) ->
+                            case FrameDict.get runtimeId stackUI.stackFrames of
+                                Just { exprs } ->
+                                    ExprDict.toList exprs
+                                    |> List.filterMap
+                                        (\(exprId, expr) ->
+                                            Maybe.map (\_ -> ( runtimeId, exprId )) expr.childFrame
+                                        )
+
+                                Nothing ->
+                                    []
+                        Nothing ->
+                            []
+                )
+                stackUI.stackTree
+            |> List.concatMap (\x -> x)
+
 
         displayedDeadExprs =
             StackTree.map
@@ -328,25 +381,10 @@ viewStyle stackUI =
                         Nothing ->
                             []
                 )
-
-        deadExprsSelector =
-            List.map
-                (\(TraceData.FrameId frameId _, SourceMapIds.ExprId exprId) ->
-                    ".elm-reader-frame-"
-                        ++ String.fromInt frameId
-                        ++ " .elm-reader-expr-"
-                        ++ String.fromInt exprId
-                )
-                displayedDeadExprs
-            |> String.join ", "
-
-        deadExprsStyle =
-            if List.isEmpty displayedDeadExprs then
-                []
-            else
-                [ Html.text deadExprsSelector, Html.text deadExprsCSSRule ]
     in
-    previewedExprStyle ++ deadExprsStyle
+    previewedExprStyle
+        ++ cssRuleForExprs displayedDeadExprs deadExprsCSSRule
+        ++ cssRuleForExprs functionCallExprs functionCallExprsCSSRule
 
 
 onMouseOver =

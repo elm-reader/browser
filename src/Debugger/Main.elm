@@ -528,16 +528,6 @@ resumeStyle = """
   cursor: pointer;
 }
 
-.elm-reader-call--opened {
-  background-color: rgb(255,255,250);
-  box-shadow: 0px 0px 1px 1px #ddc;
-  margin: 0;
-}
-
-.elm-reader-untraced {
-  color: rgba(155, 155, 155);
-}
-
 .elm-reader-frame pre {
   margin: 0;
 }
