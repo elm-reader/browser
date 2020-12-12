@@ -10,6 +10,11 @@ import Platform.Sub as Sub exposing (none)
 import Platform.Cmd as Cmd exposing (none)
 
 import Reader exposing (ModeBrowse, ModeDebug, update, view, parseConfig, parseSourceMap, parseFrame)
+import Reader.Msg as Msg exposing (NoOp, HoverExpr, ClickExpr)
+import Reader.SourceMap.Ids as Ids exposing (ExprId)
+import Reader.TraceData as TraceData exposing (FrameId)
+
+import Json.Decode as JD exposing (succeed, fail)
 
 */
 
@@ -30,6 +35,50 @@ var _Reader_impl = function (debugData) {
     subscriptions: function () { return __Sub_none; }
   };
 };
+
+
+var _Reader_mouseEventToMessage = function (eventValue) {
+  var event = eventValue.a;
+  var target = event.target;
+  if (!target) {
+    return __JD_fail("Ignore event");
+  }
+  var classes = target.className.split(" ");
+  var i;
+  var exprId = null;
+  for (i = 0; i < classes.length; i += 1) {
+    var match = /elm-reader-expr-([\d]+)/.exec(classes[i]);
+    if (match) {
+      exprId = +match[1];
+    }
+  }
+  if (!exprId) {
+    return __JD_fail("Ignore event");
+  }
+  var frameWrapper = target;
+  var frameClassMatch = null;
+outer:
+  while (frameWrapper) {
+    for (i = 0; i < frameWrapper.classList.length; i++) {
+      frameClassMatch = /elm-reader-frame-([\d]+)/.exec(frameWrapper.classList[i]);
+      if (frameClassMatch) {
+        break outer;
+      }
+    }
+    frameWrapper = frameWrapper.parentElement;
+  }
+  if (!frameClassMatch) {
+    return __JD_fail("Ignore event");
+  }
+  var frameId = +frameClassMatch[1];
+  var messageConstructor = event.type === "mouseover" ? __Msg_HoverExpr : __Msg_ClickExpr;
+  return __JD_succeed(
+    A2(messageConstructor,
+      A2(__TraceData_FrameId, frameId, __List_Nil),
+      __Ids_ExprId(exprId),
+    )
+  );
+}
 
 
 var _Reader_thunkExec = F3(function (func, thunk, childFrameId) {

@@ -1,87 +1,57 @@
 module Reader.SourceMap
     exposing
         ( ExprId
-        , Frame
         , FrameId
-        , ModuleId
+        , Frame
+        , getFrame
+        , getFrameHeight
         , Position
         , Region
         , SourceMap
-        , compareExprIds
-        , compareFrameIds
-        , compareModuleIds
-        , comparePackageIds
         , comparePositions
         , decode
-        , decodeExprId
-        , decodeFrameId
         , decodeRegion
         , exprsEndingAt
         , exprsStartingAt
-        , frameIdToString
         , lookupRegionSource
         )
 
 import Json.Decode as JD
-import Reader.Dict as Dict exposing (Dict)
+import Reader.Dict
+import Dict exposing (Dict)
+import Reader.SourceMap.ExprDict as ExprDict exposing (ExprDict)
+import Reader.SourceMap.Ids as Ids
 
 
 -- SOURCE MAPS
 
 
 type alias SourceMap =
-    { frames : Dict FrameId Frame
-    , sources : Dict ModuleId String
+    { frames : Reader.Dict.Dict Ids.FrameId Frame
+    , sources : Reader.Dict.Dict Ids.ModuleId String
     }
 
 
 emptySourceMap =
-    SourceMap Dict.empty Dict.empty
+    SourceMap Reader.Dict.empty Reader.Dict.empty
 
 
 decode : JD.Decoder SourceMap
 decode =
     JD.map2 SourceMap
-        (JD.field "frames" <| Dict.decode ( "id", decodeFrameId ) ( "frame", decodeFrame ))
-        (JD.field "sources" <| Dict.decode ( "module", decodeModuleId ) ( "source", JD.string ))
+        (JD.field "frames" <| Reader.Dict.decode ( "id", Ids.decodeFrameId ) ( "frame", decodeFrame ))
+        (JD.field "sources" <| Reader.Dict.decode ( "module", Ids.decodeModuleId ) ( "source", JD.string ))
 
 
-
--- FRAME ID
-
-
-type alias FrameId =
-    { mod : ModuleId
-    , def : Name
-    , frameIndex : Int
-    }
+getFrame : Ids.FrameId -> SourceMap -> Maybe Frame
+getFrame frameId { frames } =
+    Reader.Dict.get frameId frames
 
 
-decodeFrameId : JD.Decoder FrameId
-decodeFrameId =
-    JD.map3 FrameId
-        (JD.field "module" decodeModuleId)
-        (JD.field "def" JD.string)
-        (JD.field "frame_index" JD.int)
-
-
-frameIdToString : FrameId -> String
-frameIdToString { mod, def, frameIndex } =
-    moduleIdToString mod ++ "." ++ def ++ " (subframe #" ++ String.fromInt frameIndex ++ ")"
-
-
-compareFrameIds f1 f2 =
-    case compareModuleIds f1.mod f2.mod of
-        EQ ->
-            case compare f1.def f2.def of
-                EQ ->
-                    compare f1.frameIndex f2.frameIndex
-
-                other ->
-                    other
-
-        other ->
-            other
+getFrameHeight : Ids.FrameId -> SourceMap -> Maybe Int
+getFrameHeight id sourceMap =
+    getFrame id sourceMap
+        |> Maybe.map (\{ region } -> region.end.line - region.start.line + 1)
 
 
 
@@ -90,9 +60,21 @@ compareFrameIds f1 f2 =
 
 type alias Frame =
     { region : Region
-    , exprRegions : Dict ExprId (List Region)
-    , exprNames : Dict ExprId ( ModuleId, Name )
+    , exprRegions : ExprDict (List Region)
+    , exprNames : Reader.Dict.Dict Ids.ExprId ( Ids.ModuleId, String )
     }
+
+
+decodeExprRegions : JD.Decoder (ExprDict (List Region))
+decodeExprRegions =
+    let
+        decodeEntry =
+            JD.map2 Tuple.pair
+                (JD.field "id" (JD.map Ids.ExprId JD.int))
+                (JD.field "regions" <| JD.list decodeRegion)
+    in
+    JD.list decodeEntry
+        |> JD.map ExprDict.fromList
 
 
 decodeFrame : JD.Decoder Frame
@@ -100,89 +82,13 @@ decodeFrame =
     let
         decodeExprName =
             JD.map2 Tuple.pair
-                (JD.field "module" decodeModuleId)
+                (JD.field "module" Ids.decodeModuleId)
                 (JD.field "name" JD.string)
     in
     JD.map3 Frame
         (JD.field "region" decodeRegion)
-        (JD.field "expr_regions" <| Dict.decode ( "id", decodeExprId ) ( "regions", JD.list decodeRegion ))
-        (JD.field "expr_names" <| Dict.decode ( "id", decodeExprId ) ( "qualified_name", decodeExprName ))
-
-
-
--- EXPR ID
-
-
-type ExprId
-    = ExprId Int
-
-
-compareExprIds : ExprId -> ExprId -> Order
-compareExprIds (ExprId i) (ExprId j) =
-    compare i j
-
-
-decodeExprId : JD.Decoder ExprId
-decodeExprId =
-    JD.map ExprId JD.int
-
-
-
--- PACKAGE ID
-
-
-type PackageId
-    = PackageId String -- in format "author/project"
-
-
-comparePackageIds (PackageId p1) (PackageId p2) =
-    compare p1 p2
-
-
-decodePackageId : JD.Decoder PackageId
-decodePackageId =
-    JD.map PackageId JD.string
-
-
-packageIdToString : PackageId -> String
-packageIdToString (PackageId str) =
-    str
-
-
-
--- MODULE ID
-
-
-type alias ModuleId =
-    { package : PackageId
-    , mod : Name
-    }
-
-
-compareModuleIds : ModuleId -> ModuleId -> Order
-compareModuleIds m1 m2 =
-    case comparePackageIds m1.package m2.package of
-        EQ ->
-            compare m1.mod m2.mod
-
-        order ->
-            order
-
-
-moduleIdToString : ModuleId -> String
-moduleIdToString { package, mod } =
-    packageIdToString package ++ "." ++ mod
-
-
-decodeModuleId : JD.Decoder ModuleId
-decodeModuleId =
-    JD.map2 ModuleId
-        (JD.field "package" decodePackageId)
-        (JD.field "module" JD.string)
-
-
-type alias Name =
-    String
+        (JD.field "expr_regions" decodeExprRegions)
+        (JD.field "expr_names" <| Reader.Dict.decode ( "id", Ids.decodeExprId ) ( "qualified_name", decodeExprName ))
 
 
 
@@ -190,7 +96,7 @@ type alias Name =
 
 
 type alias Region =
-    { mod : ModuleId
+    { mod : Ids.ModuleId
     , start : Position
     , end : Position
     }
@@ -199,7 +105,7 @@ type alias Region =
 decodeRegion : JD.Decoder Region
 decodeRegion =
     JD.map3 Region
-        (JD.field "module" decodeModuleId)
+        (JD.field "module" Ids.decodeModuleId)
         (JD.field "start" decodePosition)
         (JD.field "end" decodePosition)
 
@@ -240,21 +146,8 @@ isPositionInRegion pos { start, end } =
         || (pos.line == end.line && pos.col < end.col)
 
 
-lookupPositionExprIds : Frame -> Position -> List ExprId
-lookupPositionExprIds { exprRegions } pos =
-    exprRegions
-        |> Dict.keyValuePairs
-        |> List.filterMap
-            (\( exprId, regions ) ->
-                if List.any (isPositionInRegion pos) regions then
-                    Just exprId
-                else
-                    Nothing
-            )
-
-
-lookupRegionSource : Region -> Dict ModuleId String -> Maybe String
-lookupRegionSource { mod, start, end } sources =
+lookupRegionSource : Region -> SourceMap -> Maybe String
+lookupRegionSource { mod, start, end } sourceMap =
     let
         -- nthLine returns the character position at which the nth line starts
         nthLine n str =
@@ -273,7 +166,7 @@ lookupRegionSource { mod, start, end } sources =
                 Maybe.map ((+) 1) lineBreakPos
 
         modSource =
-            Dict.lookup mod sources
+            Reader.Dict.get mod sourceMap.sources
 
         startPos =
             modSource
@@ -297,7 +190,7 @@ lookupRegionSource { mod, start, end } sources =
 {-| exprsStartingAt returns a list of the IDs of expressions with a region
 starting at `pos`, in decreasing order of the length of the associated region.
 -}
-exprsStartingAt : Position -> Dict ExprId (List Region) -> List ExprId
+exprsStartingAt : Position -> ExprDict (List Region) -> List Ids.ExprId
 exprsStartingAt pos exprRegions =
     exprsWithARegionFulfilling (\region -> region.start == pos) exprRegions
         |> List.sortWith
@@ -308,7 +201,7 @@ exprsStartingAt pos exprRegions =
 {-| exprsEndingAt returns a list of the IDs of expressions with a region
 ending at `pos`, in increasing order of the length of the associated region.
 -}
-exprsEndingAt : Position -> Dict ExprId (List Region) -> List ExprId
+exprsEndingAt : Position -> ExprDict (List Region) -> List Ids.ExprId
 exprsEndingAt pos exprRegions =
     exprsWithARegionFulfilling (\region -> region.end == pos) exprRegions
         |> List.sortWith
@@ -318,10 +211,10 @@ exprsEndingAt pos exprRegions =
 
 {-| Helper function. See exprsStartingAt and exprsEndingAt
 -}
-exprsWithARegionFulfilling : (Region -> Bool) -> Dict ExprId (List Region) -> List ( ExprId, Region )
+exprsWithARegionFulfilling : (Region -> Bool) -> ExprDict (List Region) -> List ( Ids.ExprId, Region )
 exprsWithARegionFulfilling condition exprRegions =
     exprRegions
-        |> Dict.keyValuePairs
+        |> ExprDict.toList
         |> List.filterMap
             (\( exprId, regions ) ->
                 case List.filter condition regions of
@@ -336,3 +229,13 @@ exprsWithARegionFulfilling condition exprRegions =
                     [] ->
                         Nothing
             )
+
+
+-- IDS
+
+type alias ExprId =
+    Ids.ExprId
+
+
+type alias FrameId =
+    Ids.FrameId

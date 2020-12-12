@@ -4,10 +4,12 @@ module Reader.Dict
         , decode
         , empty
         , fromList
+        , toList
         , insert
         , keyValuePairs
         , keys
-        , lookup
+        , get
+        , member
         , values
         )
 
@@ -23,6 +25,11 @@ fromList =
     Dict
 
 
+toList : Dict k v -> List ( k, v )
+toList (Dict lst) =
+    lst
+
+
 empty : Dict k v
 empty =
     fromList []
@@ -33,9 +40,19 @@ insert k v (Dict pairs) =
     Dict <| ( k, v ) :: pairs
 
 
-lookup : k -> Dict k v -> Maybe v
-lookup k (Dict pairs) =
+get : k -> Dict k v -> Maybe v
+get k (Dict pairs) =
     lookupPairs k pairs
+
+
+member : k -> Dict k v -> Bool
+member k (Dict pairs) =
+    case lookupPairs k pairs of
+        Just _ ->
+            True
+
+        Nothing ->
+            False
 
 
 lookupPairs : k -> List ( k, v ) -> Maybe v

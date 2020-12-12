@@ -1,27 +1,29 @@
 module Reader.TraceData
     exposing
         ( Expr
-        , ExprWithContext
         , Frame(..)
+        , FrameThunk(..)
         , FrameId(..)
+        , parentFrameId
         , InstrumentedFrameData
         , TraceData(..)
-        , childFrames
         , decode
         , decodeFrame
         , exprChildFrame
         , exprValue
         , frameIdOf
+        , frameIdOfThunk
         , frameIdToString
         , frameIdsEqual
         , isAncestorOf
-        , isFrameInstrumented
         )
 
 import Debug
 import Json.Decode as JD
 import Reader.Dict as Dict exposing (Dict)
 import Reader.SourceMap as SourceMap exposing (SourceMap)
+import Reader.SourceMap.Ids as SourceMapIds
+import Reader.SourceMap.ExprDict as ExprDict exposing (ExprDict)
 import Reader.TraceData.Value as Value exposing (Value)
 import Tuple
 
@@ -44,10 +46,12 @@ decode =
 -- FRAME TRACES
 
 
+type FrameThunk = Thunk FrameId (() -> Frame) | Evaluated Frame
+
+
 type Frame
-    = InstrumentedFrame InstrumentedFrameData
-    | NonInstrumentedFrame FrameId (List Frame)
-    | FrameThunk FrameId (() -> Frame)
+    = Instrumented InstrumentedFrameData
+    | NonInstrumented FrameId (List InstrumentedFrameData)
 
 
 type FrameId
@@ -71,39 +75,41 @@ frameIdToString (FrameId uid ancestors) =
         ++ String.join ", " (List.map String.fromInt ancestors)
         ++ "])"
 
+parentFrameId : FrameId -> Maybe FrameId
+parentFrameId (FrameId me ancestors) =
+    case ancestors of
+        [] ->
+            Nothing
+
+        parent :: rest ->
+            Just (FrameId parent rest)
+
 
 type alias InstrumentedFrameData =
     { sourceId : SourceMap.FrameId
     , runtimeId : FrameId
-    , exprs : Dict SourceMap.ExprId Expr
+    , exprs : ExprDict Expr
     }
-
-
-isFrameInstrumented : Frame -> Bool
-isFrameInstrumented frame =
-    case frame of
-        InstrumentedFrame _ ->
-            True
-
-        NonInstrumentedFrame _ _ ->
-            False
-
-        FrameThunk _ _ ->
-            False -- FIXME
 
 
 frameIdOf : Frame -> FrameId
 frameIdOf frame =
     case frame of
-        NonInstrumentedFrame id _ ->
+        NonInstrumented id _ ->
             id
 
-        InstrumentedFrame { runtimeId } ->
+        Instrumented { runtimeId } ->
             runtimeId
 
-        FrameThunk id _ ->
-            id
 
+frameIdOfThunk : FrameThunk -> FrameId
+frameIdOfThunk frame =
+    case frame of
+        Evaluated f ->
+            frameIdOf f
+
+        Thunk id _ ->
+            id
 
 
 frameIdsEqual : FrameId -> FrameId -> Bool
@@ -124,44 +130,42 @@ isAncestorOf (FrameId _ ancestors) (FrameId possibleAncestor _) =
 decodeFrame : JD.Decoder Frame
 decodeFrame =
     let
-        decFrame =
-            JD.lazy (\() -> decodeFrame)
-
         decExpr =
             JD.lazy (\() -> decodeExpr)
 
-        decodeInstrumented =
-            JD.map3 (\sid rid exprs -> InstrumentedFrame (InstrumentedFrameData sid rid exprs))
-                (JD.field "source_map_id" SourceMap.decodeFrameId)
+        decodeExprDict =
+            Dict.decode ( "id", SourceMapIds.decodeExprId ) ( "expr", decExpr )
+            |> JD.map Dict.toList
+            |> JD.map ExprDict.fromList
+
+        decodeInstrumentedFrameData =
+            JD.map3 (\sid rid exprs -> InstrumentedFrameData sid rid exprs)
+                (JD.field "source_map_id" SourceMapIds.decodeFrameId)
                 (JD.field "runtime_id" decodeFrameId)
-                (JD.field "exprs" <| Dict.decode ( "id", SourceMap.decodeExprId ) ( "expr", decExpr ))
+                (JD.field "exprs" decodeExprDict)
+
+        decodeInstrumented =
+            JD.map Instrumented decodeInstrumentedFrameData
 
         decodeNonInstrumented =
-            JD.map2 NonInstrumentedFrame
+            JD.map2 NonInstrumented
                 (JD.field "runtime_id" decodeFrameId)
-                (JD.field "child_frames" <| JD.list decFrame)
+                (JD.field "child_frames" <| JD.list decodeInstrumentedFrameData)
+    in
+    JD.oneOf [ decodeNonInstrumented, decodeInstrumented ]
 
-        decodeThunk =
+decodeThunk : JD.Decoder FrameThunk
+decodeThunk =
+    let
+        evaluated =
+            JD.map Evaluated decodeFrame
+
+        unevaluated =
             JD.map2 (\_ a -> a) (JD.field "is_thunk" JD.bool) <|
                 (JD.map2 Tuple.pair JD.value (JD.field "runtime_id" decodeFrameId)
                     |> JD.map Elm.Kernel.Coerce.decodeFrameThunk)
     in
-    JD.oneOf [ decodeNonInstrumented, decodeInstrumented, decodeThunk ]
-
-
-childFrames : Frame -> List Frame
-childFrames frameTrace =
-    case frameTrace of
-        InstrumentedFrame { exprs } ->
-            Dict.values exprs
-                |> List.map exprChildFrame
-                |> List.filterMap identity
-
-        NonInstrumentedFrame _ children ->
-            children
-
-        FrameThunk _ _ ->
-            Debug.log "WARNING: childFrames got a FrameThunk" []
+    JD.oneOf [ evaluated, unevaluated ]
 
 
 
@@ -171,14 +175,14 @@ childFrames frameTrace =
 {-| -}
 type Expr =
     -- childFrame is the frame that returned the value of this expression
-    Expr { value : Maybe Value , childFrame : Maybe Frame }
+    Expr { value : Maybe Value , childFrame : Maybe FrameThunk }
 
 
 exprValue : Expr -> Maybe Value
 exprValue (Expr {value}) = value
 
 
-exprChildFrame : Expr -> Maybe Frame
+exprChildFrame : Expr -> Maybe FrameThunk
 exprChildFrame (Expr {childFrame}) = childFrame
 
 
@@ -186,12 +190,4 @@ decodeExpr : JD.Decoder Expr
 decodeExpr =
     JD.map2 (\val frame -> Expr {value = val, childFrame = frame})
         (JD.field "val" <| JD.nullable Value.decode)
-        (JD.field "child_frame" <| JD.nullable decodeFrame)
-
-
-type alias ExprWithContext =
-    { frameSrcId : SourceMap.FrameId
-    , stackFrameId : FrameId
-    , exprId : SourceMap.ExprId
-    , expr : Expr
-    }
+        (JD.field "child_frame" <| JD.nullable decodeThunk)

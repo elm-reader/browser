@@ -7,6 +7,6 @@ import Reader.SourceMap as SourceMap exposing (SourceMap)
 type Msg
     = NoOp
     | SelectTopLevelFrame TraceData.InstrumentedFrameData
-    | HoverExpr TraceData.ExprWithContext
+    | HoverExpr TraceData.FrameId SourceMap.ExprId
     | UnHoverExpr
-    | OpenChildFrame TraceData.FrameId
+    | ClickExpr TraceData.FrameId SourceMap.ExprId

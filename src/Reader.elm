@@ -31,10 +31,10 @@ import Html.Events as E
 import Json.Decode as JD
 import Reader.Dict as Dict exposing (Dict)
 import Reader.Flex as Flex
-import Reader.FrameUI as FrameUI
+import Reader.StackUI as StackUI exposing (StackUI)
 import Reader.Msg as Msg
-import Reader.SelectedFrameTree as SelectedFrameTree exposing (SelectedFrameTree)
 import Reader.SourceMap as SourceMap exposing (SourceMap)
+import Reader.SourceMap.Ids as SourceMapIds
 import Reader.TraceData as TraceData exposing (TraceData(..))
 import Reader.TraceData.Value as Value exposing (Value)
 import Elm.Kernel.Reader
@@ -62,10 +62,10 @@ parseConfig mode srcMap data =
 
         Ok { sources, traces } ->
             let
-                selectedFrames =
+                stackUI =
                     case traces of
                         TraceData (frameTrace :: _) ->
-                            Just (SelectedFrameTree.fromTrace frameTrace)
+                            Just (StackUI.fromTrace sources frameTrace)
 
                         TraceData [] ->
                             Nothing
@@ -77,15 +77,11 @@ parseConfig mode srcMap data =
                                 |> List.filterMap
                                     (\f ->
                                         case f of
-                                            TraceData.InstrumentedFrame frameData ->
+                                            TraceData.Instrumented frameData ->
                                                 Just frameData
 
-                                            TraceData.NonInstrumentedFrame _ _ ->
+                                            TraceData.NonInstrumented _ _ ->
                                                 Nothing
-
-                                            TraceData.FrameThunk _ _ ->
-                                                -- FIXME
-                                                Debug.log "got FrameThunk (in Reader.elm:tracesOutline)!" Nothing
                                     )
                     in
                     { topLevelInstrumented = instrumentedFrameTraces
@@ -96,8 +92,7 @@ parseConfig mode srcMap data =
             ProgramDataReceived
                 { sources = sources
                 , tracesOutline = tracesOutline
-                , hoveredExpr = Nothing
-                , selectedFrames = selectedFrames
+                , stackUI = stackUI
                 , mode = mode
                 }
 
@@ -139,8 +134,7 @@ type alias TracesOutline =
 type alias ModelAfterInit =
     { sources : SourceMap
     , tracesOutline : TracesOutline
-    , hoveredExpr : Maybe TraceData.ExprWithContext
-    , selectedFrames : Maybe SelectedFrameTree
+    , stackUI : Maybe StackUI
     , mode : Mode
     }
 
@@ -179,6 +173,23 @@ update msg model =
             , Cmd.none
             )
 
+map1_3 : (a -> b -> c -> d) -> (Maybe a -> b -> c -> Maybe d)
+map1_3 f maybeA b c =
+    case maybeA of
+        Just a ->
+            Just (f a b c)
+
+        Nothing ->
+            Nothing
+
+map1_4 : (a -> b -> c -> d -> e) -> (Maybe a -> b -> c -> d -> Maybe e)
+map1_4 f maybeA b c d =
+    case maybeA of
+        Just a ->
+            Just (f a b c d)
+
+        Nothing ->
+            Nothing
 
 updateAfterInit : Msg -> ModelAfterInit -> ModelAfterInit
 updateAfterInit msg model =
@@ -186,31 +197,17 @@ updateAfterInit msg model =
         Msg.NoOp ->
             model
 
-        Msg.HoverExpr exprData ->
-            { model | hoveredExpr = Just exprData }
+        Msg.HoverExpr frameId exprId ->
+            { model | stackUI = (map1_3 StackUI.handleExprHover) model.stackUI frameId exprId }
 
         Msg.UnHoverExpr ->
-            { model | hoveredExpr = Nothing }
+            { model | stackUI = Maybe.map StackUI.handleExprUnHover model.stackUI }
+
+        Msg.ClickExpr frameId exprId ->
+            { model | stackUI = (map1_4 StackUI.handleExprClick) model.stackUI model.sources frameId exprId }
 
         Msg.SelectTopLevelFrame frameTrace ->
-            let
-                selectedFrameTree =
-                    SelectedFrameTree.fromTrace (TraceData.InstrumentedFrame frameTrace)
-            in
-            { model | selectedFrames = Just selectedFrameTree }
-
-        Msg.OpenChildFrame childFrameId ->
-            case model.selectedFrames of
-                Nothing ->
-                    Debug.log "Unexpected OpenChildFrame msg!" model
-
-                Just topLevelSelectedFrame ->
-                    { model |
-                        selectedFrames =
-                            Maybe.map
-                                (SelectedFrameTree.openFrame childFrameId model.sources)
-                                model.selectedFrames
-                    }
+            { model | stackUI = Just (StackUI.fromTrace model.sources (TraceData.Instrumented frameTrace)) }
 
 
 
@@ -231,7 +228,7 @@ view generalModel =
 
 
 viewAfterInit : ModelAfterInit -> Html Msg
-viewAfterInit { sources, tracesOutline, hoveredExpr, selectedFrames, mode } =
+viewAfterInit { sources, tracesOutline, stackUI, mode } =
     let
         outlineSidebar =
             case mode of
@@ -253,14 +250,16 @@ viewAfterInit { sources, tracesOutline, hoveredExpr, selectedFrames, mode } =
                     rest
     in
     heading <|
-        Flex.rowWith
+        Html.div
             [ A.style "padding-bottom" "40px"
             ]
-            (outlineSidebar
-                ++ [ viewTraceWindow (A.style "flex" "5") sources hoveredExpr selectedFrames
-                   , div [ A.style "flex" "3" ] [ viewDetailsSidebar [ A.style "position" "fixed" ] hoveredExpr ]
-                   ]
-            )
+            (outlineSidebar ++
+                case stackUI of
+                    Just stackUI_ ->
+                        [ StackUI.viewStackUI stackUI_ ]
+
+                    Nothing ->
+                        [])
 
 
 viewOutlineSidebar : Attribute Msg -> TracesOutline -> Html Msg
@@ -271,52 +270,8 @@ viewOutlineSidebar width {numNoninstrumented, topLevelInstrumented} =
                 [ A.href "#"
                 , E.onClick (Msg.SelectTopLevelFrame frame)
                 ]
-                [ text (SourceMap.frameIdToString frame.sourceId) ]
+                [ text (SourceMapIds.frameIdToString frame.sourceId) ]
     in
     Flex.columnWith [ width ] <|
         List.map viewFrameLink topLevelInstrumented
             ++ [ text (String.fromInt numNoninstrumented ++ " noninstrumented frames") ]
-
-
-viewDetailsSidebar : List (Attribute Msg) -> Maybe TraceData.ExprWithContext -> Html Msg
-viewDetailsSidebar layout maybeExpr =
-    let
-        container =
-            div layout
-    in
-    case maybeExpr of
-        Nothing ->
-            container [ text "No expression selected" ]
-
-        Just { frameSrcId, exprId, expr } ->
-            case TraceData.exprValue expr of
-                Nothing ->
-                    container [ text "Expression has no (recorded) value" ]
-
-                Just val ->
-                    container [ text (Value.toString val) ]
-
-
-viewTraceWindow :
-    Attribute Msg
-    -> SourceMap
-    -> Maybe TraceData.ExprWithContext
-    -> Maybe SelectedFrameTree
-    -> Html Msg
-viewTraceWindow width sources hoveredExpr maybeTrace =
-    let
-        container =
-            div [ width ]
-    in
-    case maybeTrace of
-        Nothing ->
-            container [ text (Elm.Kernel.Reader.log "in Nothing branch" "Select a frame to view on the left") ]
-
-        Just selFrame ->
-            let
-                childTraces =
-                    selFrame
-                        |> SelectedFrameTree.getOpenFrames
-                        |> List.map (FrameUI.view sources hoveredExpr)
-            in
-            container childTraces

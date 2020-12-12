@@ -511,11 +511,13 @@ resumeStyle = """
   background-color: rgb(41, 41, 41);
 }
 
+.elm-reader-stack {
+  position: relative;
+  margin: 5px;
+}
+
 .elm-reader-expr {
   cursor: default;
-  border-radius: 3px;
-  padding: 1px;
-  margin: 1px;
 }
 
 .elm-reader-expr--hovered {
@@ -536,11 +538,17 @@ resumeStyle = """
   color: rgba(155, 155, 155);
 }
 
+.elm-reader-frame pre {
+  margin: 0;
+}
+
 .elm-reader-frame {
-  padding: 3px;
-  margin: 6px;
+  line-height: 1em;
+  width: calc(100% - 1em);
+  padding: 0.5em;
   border-radius: 4px;
   box-shadow: 2px 2px 2px 2px #ccc;
   background-color: rgb(253, 253, 253);
+  position: absolute;
 }
 """
