@@ -1,4 +1,4 @@
-module Reader.SourceMap.ExprDict exposing (ExprDict, empty, get, update, find, fromList, toList, unionMany, keys)
+module Reader.SourceMap.ExprDict exposing (ExprDict, empty, get, set, update, find, fromList, toList, unionMany, keys)
 
 import Dict exposing (Dict)
 import Reader.SourceMap.Ids exposing (ExprId(..))
@@ -24,6 +24,11 @@ empty = ExprDict Dict.empty
 get : ExprId -> ExprDict a -> Maybe a
 get (ExprId i) (ExprDict dict) =
     Dict.get i dict
+
+
+set : ExprId -> a -> ExprDict a -> ExprDict a
+set (ExprId i) a (ExprDict dict) =
+    ExprDict (Dict.insert i a dict)
 
 
 update : ExprId -> (a -> a) -> ExprDict a -> ExprDict a

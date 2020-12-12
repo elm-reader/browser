@@ -402,24 +402,12 @@ popoutView { history, state, expando, reader } =
     ]
     [ viewSidebar state history
     , div
-        [ style "display" "block"
-        , style "float" "left"
-        , style "height" "100%"
-        , style "width" "calc(40% - 30ch)"
-        , style "margin" "0"
-        , style "overflow" "auto"
-        , style "cursor" "default"
-        ]
-        [ Html.map ExpandoMsg (Expando.view Nothing expando)
-        ]
-    , div
         [ style "height" "100%"
-        , style "width" "60%"
         , style "overflow" "scroll"
         ]
         [ case reader of
             Nothing ->
-              text "Reader closed."
+              Html.map ExpandoMsg (Expando.view Nothing expando)
 
             Just readerModel ->
               Html.map ReaderMsg (Reader.view readerModel)
@@ -511,8 +499,20 @@ resumeStyle = """
   background-color: rgb(41, 41, 41);
 }
 
+.elm-reader-container {
+  margin: 5px;
+}
+
 .elm-reader-stack {
   position: relative;
+  width: 80%;
+  left: 20%;
+}
+
+.elm-reader-details {
+  position: relative;
+  width: 20%;
+  top: 0;
   margin: 5px;
 }
 

@@ -18,7 +18,7 @@ type Value = Value JD.Value
 
 
 toString : Value -> String
-toString (Value x) = "<value>" -- Debug.toString x -- FIXME to be "<value>"
+toString (Value x) = Debug.toString (Elm.Kernel.Json.unwrap x)
 
 decode : JD.Decoder Value
 decode = JD.map Value JD.value

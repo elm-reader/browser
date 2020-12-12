@@ -3,6 +3,7 @@ module Reader.StackUI exposing (StackUI, fromTrace, handleExprClick, handleExprH
 import Debug
 
 import Elm.Kernel.Reader
+import Elm.Kernel.Debugger
 
 import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.SourceMap.Ids as SourceMapIds
@@ -92,7 +93,7 @@ exprsFromTrace srcMap frame =
                                     (Just value, Just { start }) ->
                                         Just
                                             ( exprId
-                                            , { line = start.line
+                                            , { line = start.line - sourceFrame.region.start.line
                                               , value = value
                                               , model = Nothing
                                               , childFrame = TraceData.exprChildFrame expr
@@ -254,12 +255,42 @@ handleExprClick stackUI srcMap frameRuntimeId exprId =
 handleExprHover : StackUI -> TraceData.FrameId -> SourceMap.ExprId -> StackUI
 handleExprHover stackUI frame expr =
     let
-        exprValue =
+        maybeExprData =
             FrameDict.get frame stackUI.stackFrames
             |> Maybe.map .exprs
             |> Maybe.andThen (ExprDict.get expr)
+
+        exprModel =
+            Maybe.andThen .model maybeExprData
     in
-    { stackUI | previewedExpr = Maybe.map (\_ -> (frame, expr)) exprValue }
+    case ( maybeExprData, exprModel ) of
+        ( Nothing, _ ) ->
+            { stackUI | previewedExpr = Nothing }
+
+        ( Just _, Just _ ) ->
+            { stackUI | previewedExpr = Just ( frame, expr ) }
+
+        ( Just exprData, Nothing ) ->
+            let
+                newExprModel =
+                    Value.toString exprData.value
+
+                newStackFrames =
+                    FrameDict.update
+                        frame
+                        (\frameData ->
+                            { frameData
+                                | exprs =
+                                    frameData.exprs
+                                    |> ExprDict.set expr { exprData | model = Just newExprModel }
+                                }
+                        )
+                        stackUI.stackFrames
+            in
+            { stackUI
+                | previewedExpr = Just ( frame, expr )
+                , stackFrames = newStackFrames
+                }
 
 
 handleExprUnHover : StackUI -> StackUI
@@ -397,12 +428,53 @@ onClick =
         JD.andThen Elm.Kernel.Reader.mouseEventToMessage JD.value
 
 
+maybeToList : Maybe a -> List a
+maybeToList maybe =
+    case maybe of
+        Just a ->
+            [ a ]
+
+        Nothing ->
+            []
+
+
 viewStackUI : StackUI -> Html Msg
 viewStackUI stackUI =
-    -- TODO: expression view
+    let
+        previewedExpr =
+            case stackUI.previewedExpr of
+                Nothing ->
+                    []
+
+                Just ( frameId, exprId ) ->
+                    case FrameDict.get frameId stackUI.stackFrames of
+                        Just frameData ->
+                            case ExprDict.get exprId frameData.exprs of
+                                Just exprData ->
+                                    let
+                                        top = String.fromInt (frameData.topY + exprData.line) ++ "em"
+                                        content =
+                                            Maybe.map Html.text exprData.model
+                                            |> maybeToList
+                                    in
+                                    [ Html.div
+                                        [ A.style "position" "absolute"
+                                        , A.style "top" top
+                                        ]
+                                        content
+                                    ]
+
+                                Nothing ->
+                                    []
+                        Nothing ->
+                            []
+    in
     Html.div
-        []
+        [ A.class "elm-reader-container" ]
         [ Html.div
+            [ A.class "elm-reader-details" ]
+            previewedExpr
+        , Html.div
             [ A.class "elm-reader-stack"
             , E.onMouseOut Msg.UnHoverExpr
             , onMouseOver
