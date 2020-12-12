@@ -212,6 +212,8 @@ var _Reader_context = {
 
 var _Reader_contextDepth = 0;
 
+var _Reader_numFramesRecorded = 0;
+
 var _Reader_recordExpr = F2(function (exprId, val) {
   if (_Reader_context.$ === __1_NO_RECORD || (_Reader_context.__exprs && exprId in _Reader_context.__exprs)) {
     // TODO: remove the latter condition, and instead
@@ -283,23 +285,28 @@ var _Reader_recordCall = F3(function (exprId, func, body) {
     var oldContext = _Reader_context;
     _Reader_context = newContext;
     _Reader_contextDepth += 1;
+    var framesRecordedBeforeCall = _Reader_numFramesRecorded;
     var result = body(__Utils_Tuple0);
     _Reader_context = oldContext;
     _Reader_contextDepth -= 1;
 
-    var childFrame;
-    if (newContext.$ === __1_NO_RECORD) {
-      childFrame = {
-        $: __2_THUNK,
-        __childId: newContext.__id,
-        __thunk: newContext.__thunk,
-      };
-    } else {
-      childFrame = {
-        $: __2_NON_INSTRUMENTED,
-        __childFrames: newContext.__childFrames,
-        __runtimeId: newContext.__runtimeId,
-      };
+    var childFrame = null;
+    if (_Reader_numFramesRecorded > framesRecordedBeforeCall) {
+      // Check that at least one frame was recorded, so that
+      // partial applications don't get recorded as calls.
+      if (newContext.$ === __1_NO_RECORD) {
+        childFrame = {
+          $: __2_THUNK,
+          __childId: newContext.__id,
+          __thunk: newContext.__thunk,
+        };
+      } else {
+        childFrame = {
+          $: __2_NON_INSTRUMENTED,
+          __childFrames: newContext.__childFrames,
+          __runtimeId: newContext.__runtimeId,
+        };
+      }
     }
 
     _Reader_context.__exprs[exprId] = {
@@ -331,17 +338,26 @@ var _Reader_recordCall = F3(function (exprId, func, body) {
   var oldContext = _Reader_context;
   _Reader_context = newContext;
   _Reader_contextDepth++;
+  var framesRecordedBeforeCall = _Reader_numFramesRecorded;
   var result = body(__Utils_Tuple0);
   _Reader_context = oldContext;
   _Reader_contextDepth--;
 
-  var childFrame = newContext.__childFrame;
+  var childFrame = newContext.__childFrame || null;
   if (newContext.$ === __1_NO_RECORD) {
-    childFrame = {
-      $: __2_THUNK,
-      __childId: newContext.__id,
-      __thunk: newContext.__thunk,
-    };
+    // Check that at least one frame was recorded, so that
+    // partial applications don't get recorded as calls.
+    console.info("Deciding whether to record frame --",
+      "_Reader_numFramesRecorded: ", _Reader_numFramesRecorded,
+      "; framesRecordedBeforeCall: ", framesRecordedBeforeCall,
+      "; childFrame: ", childFrame);
+    if (_Reader_numFramesRecorded > framesRecordedBeforeCall) {
+      childFrame = {
+        $: __2_THUNK,
+        __childId: newContext.__id,
+        __thunk: newContext.__thunk,
+      };
+    }
   }
   _Reader_context.__exprs[exprId] = {
     __val: result,
@@ -352,6 +368,7 @@ var _Reader_recordCall = F3(function (exprId, func, body) {
 });
 
 var _Reader_recordFrame = F2(function (frameIdRaw, body) {
+  _Reader_numFramesRecorded += 1;
   if (_Reader_context.$ === __1_NO_RECORD) {
     return body(__Utils_Tuple0);
   }
