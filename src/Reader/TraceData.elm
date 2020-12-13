@@ -9,6 +9,7 @@ module Reader.TraceData
         , TraceData(..)
         , decode
         , decodeFrame
+        , evaluate
         , exprChildFrame
         , exprValue
         , frameIdOf
@@ -102,6 +103,11 @@ frameIdOf frame =
             runtimeId
 
 
+frameIdsEqual : FrameId -> FrameId -> Bool
+frameIdsEqual (FrameId uid1 _) (FrameId uid2 _) =
+    uid1 == uid2
+
+
 frameIdOfThunk : FrameThunk -> FrameId
 frameIdOfThunk frame =
     case frame of
@@ -112,10 +118,14 @@ frameIdOfThunk frame =
             id
 
 
-frameIdsEqual : FrameId -> FrameId -> Bool
-frameIdsEqual (FrameId uid1 _) (FrameId uid2 _) =
-    uid1 == uid2
+evaluate : FrameThunk -> Frame
+evaluate frameThunk =
+    case frameThunk of
+        Thunk runtimeId thunk ->
+            thunk ()
 
+        Evaluated frame ->
+            frame
 
 {-| `isAncestorOf a b` answers whether b is an ancestor of a.
 
@@ -153,6 +163,7 @@ decodeFrame =
                 (JD.field "child_frames" <| JD.list decodeInstrumentedFrameData)
     in
     JD.oneOf [ decodeNonInstrumented, decodeInstrumented ]
+
 
 decodeThunk : JD.Decoder FrameThunk
 decodeThunk =

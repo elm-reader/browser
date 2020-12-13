@@ -2,6 +2,7 @@ module Reader.StackUI.RenderedFrameMap
     exposing
         ( RenderedFrameMap
         , ensure
+        , ensureOne
         , renderFrame
         , empty
         , get
@@ -41,6 +42,20 @@ ensure srcMap frames (RenderedFrameMap renderedFrameMap) =
                 )
             renderedFrameMap
             frames)
+
+
+ensureOne : SourceMap -> SourceMap.FrameId -> RenderedFrameMap -> ( RenderedFrameMap, { lines : Int, html : Html Msg } )
+ensureOne srcMap sourceId ((RenderedFrameMap renders) as renderedFrameMap) =
+    case SrcMapFrameDict.get sourceId renders of
+        Just render ->
+            ( renderedFrameMap, render )
+
+        Nothing ->
+            let
+                render =
+                    renderFrame srcMap sourceId
+            in
+            ( RenderedFrameMap (SrcMapFrameDict.set sourceId render renders), render )
 
 renderFrame : SourceMap -> SourceMap.FrameId -> { lines : Int, html : Html Msg }
 renderFrame srcMap id =

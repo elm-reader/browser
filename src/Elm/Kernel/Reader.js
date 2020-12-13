@@ -347,10 +347,6 @@ var _Reader_recordCall = F3(function (exprId, func, body) {
   if (newContext.$ === __1_NO_RECORD) {
     // Check that at least one frame was recorded, so that
     // partial applications don't get recorded as calls.
-    console.info("Deciding whether to record frame --",
-      "_Reader_numFramesRecorded: ", _Reader_numFramesRecorded,
-      "; framesRecordedBeforeCall: ", framesRecordedBeforeCall,
-      "; childFrame: ", childFrame);
     if (_Reader_numFramesRecorded > framesRecordedBeforeCall) {
       childFrame = {
         $: __2_THUNK,

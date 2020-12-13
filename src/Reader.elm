@@ -65,7 +65,7 @@ parseConfig mode srcMap data =
                 stackUI =
                     case traces of
                         TraceData (frameTrace :: _) ->
-                            Just (StackUI.fromTrace sources frameTrace)
+                            StackUI.fromTrace sources frameTrace
 
                         TraceData [] ->
                             Nothing
@@ -206,8 +206,11 @@ updateAfterInit msg model =
         Msg.ClickExpr frameId exprId ->
             { model | stackUI = (map1_4 StackUI.handleExprClick) model.stackUI model.sources frameId exprId }
 
+        Msg.OpenChildFrame parentFrameId childFrame ->
+            { model | stackUI = (map1_4 StackUI.handleOpenChildFrame) model.stackUI model.sources parentFrameId childFrame }
+
         Msg.SelectTopLevelFrame frameTrace ->
-            { model | stackUI = Just (StackUI.fromTrace model.sources (TraceData.Instrumented frameTrace)) }
+            { model | stackUI = StackUI.fromTrace model.sources (TraceData.Instrumented frameTrace) }
 
 
 

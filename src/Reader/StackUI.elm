@@ -1,4 +1,4 @@
-module Reader.StackUI exposing (StackUI, fromTrace, handleExprClick, handleExprHover, handleExprUnHover, viewStackUI)
+module Reader.StackUI exposing (StackUI, fromTrace, handleExprClick, handleOpenChildFrame, handleExprHover, handleExprUnHover, viewStackUI)
 
 import Debug
 
@@ -40,8 +40,8 @@ type alias StackUI =
         FrameDict
             { exprs : ExprDict ActiveExprData
             , deadExprs : ExprDict ()
-            , sourceId : SourceMap.FrameId
             , topY : Int
+            , height : Int
             }
     , previewedExpr : Maybe ( TraceData.FrameId, SourceMap.ExprId )
     -- TODO: , pinnedExprs : List ( TraceData.FrameId, SourceMap.ExprId )
@@ -108,7 +108,7 @@ exprsFromTrace srcMap frame =
             ( liveExprs, deadExprs )
 
 
-fromTrace : SourceMap -> TraceData.Frame -> StackUI
+fromTrace : SourceMap -> TraceData.Frame -> Maybe StackUI
 fromTrace srcMap frameTrace =
     let
         openFrame = OpenFrame.fromTrace frameTrace
@@ -118,11 +118,14 @@ fromTrace srcMap frameTrace =
                 TraceData.Instrumented data ->
                     let
                         ( liveExprs, deadExprs ) = exprsFromTrace srcMap data
+                        height =
+                            -- On error, default to 10 arbitrarily
+                            SourceMap.getFrameHeight data.sourceId srcMap |> Maybe.withDefault 10
                     in
                     ( FrameDict.fromList
                         [ ( data.runtimeId
                           , { topY = 1
-                            , sourceId = data.sourceId
+                            , height = height
                             , exprs = liveExprs
                             , deadExprs = deadExprs
                             }
@@ -137,8 +140,17 @@ fromTrace srcMap frameTrace =
                             (\frame ->
                                 let
                                     ( liveExprs, deadExprs ) = exprsFromTrace srcMap frame
+                                    height =
+                                        -- On error, default to 10 arbitrarily
+                                        SourceMap.getFrameHeight frame.sourceId srcMap |> Maybe.withDefault 10
                                 in
-                                ( frame.runtimeId, { topY = 1, sourceId = frame.sourceId, exprs = liveExprs, deadExprs = deadExprs } )
+                                ( frame.runtimeId
+                                , { topY = 1
+                                  , height = height
+                                  , exprs = liveExprs
+                                  , deadExprs = deadExprs
+                                  }
+                                )
                             )
                         |> FrameDict.fromList
                     , List.map .sourceId subframes
@@ -152,11 +164,17 @@ fromTrace srcMap frameTrace =
                             []
                     )
     in
-    { stackTree = StackTree.singleton openFrame
-    , renderedFrames = RenderedFrameMap.ensure srcMap sourceFrameIds RenderedFrameMap.empty
-    , stackFrames = stackFrames
-    , previewedExpr = Nothing
-    }
+    case StackTree.singleton openFrame of
+        Just singleton ->
+            Just
+                { stackTree = singleton
+                , renderedFrames = RenderedFrameMap.ensure srcMap sourceFrameIds RenderedFrameMap.empty
+                , stackFrames = stackFrames
+                , previewedExpr = Nothing
+                }
+
+        Nothing ->
+            Nothing
 
 
 
@@ -167,89 +185,111 @@ frameLineSpacing = 2
 frameLinePadding : Float
 frameLinePadding = 0.5
 
+nonInstrumentedFrameHeight : Int
+nonInstrumentedFrameHeight = 2
 
-openChildFrame : SourceMap -> StackUI -> TraceData.FrameId -> SourceMap.ExprId -> TraceData.FrameThunk -> StackUI
-openChildFrame srcMap stackUI parentFrameId exprId frameThunk =
+
+openChildFrame : SourceMap -> StackUI -> TraceData.FrameId -> TraceData.Frame -> StackUI
+openChildFrame srcMap stackUI parentFrameId childFrame =
     let
-        evaluated =
-            case frameThunk of
-                TraceData.Thunk runtimeId thunk ->
-                    thunk ()
+        childsOpenFrame =
+            OpenFrame.fromTrace childFrame
 
-                TraceData.Evaluated frame ->
-                    frame
+        ( newRenderedFrames, childFrameHeight ) =
+            case childFrame of
+                TraceData.Instrumented { sourceId } ->
+                    let
+                        ( renders, renderedChild ) =
+                            RenderedFrameMap.ensureOne srcMap sourceId stackUI.renderedFrames
+                    in
+                    ( renders, renderedChild.lines )
 
-        openFrame = OpenFrame.fromTrace evaluated
+                TraceData.NonInstrumented _ _ ->
+                    ( stackUI.renderedFrames, nonInstrumentedFrameHeight )
 
-        ensureChildFrameData stackFrames =
-            case OpenFrame.getData openFrame of
-                Just data ->
-                    if FrameDict.member data.runtimeId stackFrames then
-                        stackFrames
-                    else
-                        -- Initialize the frame data
-                        case FrameDict.get parentFrameId stackFrames of
-                            Just parentFrame ->
-                                case RenderedFrameMap.get parentFrame.sourceId stackUI.renderedFrames of
-                                    Just { lines } ->
-                                        let
-                                            ( liveExprs, deadExprs ) = exprsFromTrace srcMap data
-                                        in
-                                        FrameDict.set
-                                            data.runtimeId
-                                            { topY = parentFrame.topY + lines + frameLineSpacing
-                                            , sourceId = data.sourceId
-                                            , exprs = liveExprs
-                                            , deadExprs = deadExprs
-                                            }
-                                            stackFrames
+        newStackFrames =
+            if FrameDict.member (TraceData.frameIdOf childFrame) stackUI.stackFrames then
+                stackUI.stackFrames
+            else
+                let
+                    ( liveExprs, deadExprs ) =
+                        case childFrame of
+                            TraceData.Instrumented data ->
+                                exprsFromTrace srcMap data
 
-                                    Nothing ->
-                                        stackFrames -- unreachable so long as renderedFrames is properly maintained
+                            TraceData.NonInstrumented _ _ ->
+                                -- As a non-instrumented frame, there are no exprs:
+                                ( ExprDict.empty, ExprDict.empty )
 
+                    childFrameTopY =
+                        case FrameDict.get parentFrameId stackUI.stackFrames of
                             Nothing ->
-                                stackFrames -- unreachable so long as stackFrames is properly maintained
+                                1 -- unreachable so long as stackFrames is properly maintained
 
-                Nothing ->
-                    stackFrames -- unreachable (so long as openFrame is a valid OpenFrame)
+                            Just parentFrame ->
+                                parentFrame.topY + parentFrame.height + frameLineSpacing
+                in
+                FrameDict.set
+                    (OpenFrame.runtimeFrameIdOf childsOpenFrame)
+                    { topY = childFrameTopY
+                    , height = childFrameHeight
+                    , exprs = liveExprs
+                    , deadExprs = deadExprs
+                    }
+                    stackUI.stackFrames
+
+        newStackUI =
+            { stackUI
+                | stackTree = StackTree.openChildFrame parentFrameId childsOpenFrame stackUI.stackTree
+                , stackFrames = newStackFrames
+                , renderedFrames = newRenderedFrames
+                }
     in
-    { stackUI
-        | stackTree = StackTree.openChildFrame parentFrameId openFrame stackUI.stackTree
-        , stackFrames =
-            let
-                setExprChildFrameCache expr = { expr | childFrame = Just (TraceData.Evaluated evaluated) }
-            in
-            stackUI.stackFrames
-                |> FrameDict.update
-                    parentFrameId
-                    (\parentFrameData ->
-                        let newExprs = ExprDict.update exprId setExprChildFrameCache parentFrameData.exprs in
-                        { parentFrameData | exprs = newExprs })
-                |> ensureChildFrameData
-        , renderedFrames =
-            case OpenFrame.frameIdsOf openFrame of
-                Just ( sourceId, _ ) ->
-                    RenderedFrameMap.ensure srcMap [ sourceId ] stackUI.renderedFrames
+    case OpenFrame.childFrameOf childsOpenFrame of
+        Nothing ->
+            newStackUI
 
-                Nothing ->
-                    stackUI.renderedFrames -- unreachable
-        }
+        Just grandchildFrame ->
+            -- When childFrame is NonInstrumented, since it has just been opened,
+            -- its first child (the grandchild) must also be opened
+            openChildFrame srcMap newStackUI (TraceData.frameIdOf childFrame) grandchildFrame
 
 
 handleExprClick : StackUI -> SourceMap -> TraceData.FrameId -> SourceMap.ExprId -> StackUI
-handleExprClick stackUI srcMap frameRuntimeId exprId =
+handleExprClick stackUI srcMap parentFrameId exprId =
     let
         expr =
-            FrameDict.get frameRuntimeId stackUI.stackFrames
+            FrameDict.get parentFrameId stackUI.stackFrames
             |> Maybe.map .exprs
             |> Maybe.andThen (ExprDict.get exprId)
     in
     case expr |> Maybe.andThen .childFrame of
         Just childFrame ->
-            openChildFrame srcMap stackUI frameRuntimeId exprId childFrame
+            let
+                evaluatedFrame =
+                    TraceData.evaluate childFrame
+
+                newStackFrames =
+                    -- Update exprId's childFrame thunk with the evaluated version
+                    let
+                        setExprChildFrameCache e = { e | childFrame = Just (TraceData.Evaluated evaluatedFrame) }
+                    in
+                    stackUI.stackFrames
+                        |> FrameDict.update
+                            parentFrameId
+                            (\parentFrameData ->
+                                let newExprs = ExprDict.update exprId setExprChildFrameCache parentFrameData.exprs in
+                                { parentFrameData | exprs = newExprs })
+            in
+            openChildFrame srcMap { stackUI | stackFrames = newStackFrames } parentFrameId evaluatedFrame
 
         Nothing ->
             stackUI
+
+
+handleOpenChildFrame : StackUI -> SourceMap -> TraceData.FrameId -> TraceData.InstrumentedFrameData -> StackUI
+handleOpenChildFrame stackUI srcMap parentId child =
+    openChildFrame srcMap stackUI parentId (TraceData.Instrumented child)
 
 
 handleExprHover : StackUI -> TraceData.FrameId -> SourceMap.ExprId -> StackUI
@@ -367,18 +407,18 @@ viewStyle stackUI =
         functionCallExprs =
             StackTree.map
                 (\openFrame ->
-                    case OpenFrame.frameIdsOf openFrame of
-                        Just ( _, runtimeId ) ->
-                            case FrameDict.get runtimeId stackUI.stackFrames of
-                                Just { exprs } ->
-                                    ExprDict.toList exprs
-                                    |> List.filterMap
-                                        (\(exprId, expr) ->
-                                            Maybe.map (\_ -> ( runtimeId, exprId )) expr.childFrame
-                                        )
+                    let
+                        runtimeId =
+                            OpenFrame.runtimeFrameIdOf openFrame
+                    in
+                    case FrameDict.get runtimeId stackUI.stackFrames of
+                        Just { exprs } ->
+                            ExprDict.toList exprs
+                            |> List.filterMap
+                                (\(exprId, expr) ->
+                                    Maybe.map (\_ -> ( runtimeId, exprId )) expr.childFrame
+                                )
 
-                                Nothing ->
-                                    []
                         Nothing ->
                             []
                 )
@@ -389,14 +429,13 @@ viewStyle stackUI =
         displayedDeadExprs =
             StackTree.map
                 (\openFrame ->
-                    case OpenFrame.frameIdsOf openFrame of
-                        Just ( _, runtimeId ) ->
-                            case FrameDict.get runtimeId stackUI.stackFrames of
-                                Just { deadExprs } ->
-                                    Just ( runtimeId, deadExprs )
-
-                                Nothing ->
-                                    Nothing
+                    let
+                        runtimeId =
+                            OpenFrame.runtimeFrameIdOf openFrame
+                    in
+                    case FrameDict.get runtimeId stackUI.stackFrames of
+                        Just { deadExprs } ->
+                            Just ( runtimeId, deadExprs )
 
                         Nothing ->
                             Nothing
@@ -424,7 +463,7 @@ onMouseOver =
 
 
 onClick =
-    E.on "click" <|
+    E.on "mousedown" <|
         JD.andThen Elm.Kernel.Reader.mouseEventToMessage JD.value
 
 
@@ -490,29 +529,52 @@ viewStackUI stackUI =
 
 viewOpenFrame : StackUI -> OpenFrame -> Html Msg
 viewOpenFrame stackUI openFrame =
-    case OpenFrame.frameIdsOf openFrame of
-        Just ( sourceId, ((TraceData.FrameId numRuntimeId _) as runtimeId) ) ->
-            let
-                frameSource = RenderedFrameMap.get sourceId stackUI.renderedFrames
+    let
+        ((TraceData.FrameId numRuntimeId _) as runtimeId) =
+            OpenFrame.runtimeFrameIdOf openFrame
 
-                frameExprData = FrameDict.get runtimeId stackUI.stackFrames
-            in
-            case ( frameSource, frameExprData ) of
-                ( Just { html, lines }, Just { topY } ) ->
-                    Html.div
-                        [ A.class "elm-reader-frame"
-                        , A.class ("elm-reader-frame-" ++ String.fromInt numRuntimeId)
-                        , A.style "top" (String.fromFloat (toFloat topY - frameLinePadding) ++ "em")
-                        , A.style "height" (String.fromInt lines ++ "em")
-                        ]
-                        [ html ]
+        ( topY, height ) =
+            FrameDict.get runtimeId stackUI.stackFrames
+            |> Maybe.map (\f -> ( f.topY, f.height ))
+            |> Maybe.withDefault (1, 1)
 
-                _ ->
-                    Html.div
-                        [ A.class "elm-reader-frame"
-                        , A.class ("elm-reader-frame-" ++ String.fromInt numRuntimeId)
-                        ]
-                        [ Html.text "Frame failed to render!" ]
+        frameWrapper =
+            Html.div
+                [ A.class "elm-reader-frame"
+                , A.class ("elm-reader-frame-" ++ String.fromInt numRuntimeId)
+                , A.style "top" (String.fromFloat (toFloat topY - frameLinePadding) ++ "em")
+                , A.style "height" (String.fromInt height ++ "em")
+                ]
+    in
+    case openFrame of
+        OpenFrame.NonInstrumented _ idx subframes ->
+            frameWrapper
+                [ Html.text "This frame is not instrumented, but has "
+                , Html.text (String.fromInt (Array.length subframes))
+                , Html.text " instrumented sub-frames."
+                , Html.br [] []
+                , Html.text "Showing frame "
+                , Html.input
+                    [ A.value (String.fromInt idx), A.type_ "number"
+                    , E.onInput
+                        (\value ->
+                            case String.toInt value |> Maybe.andThen (\i -> Array.get i subframes) of
+                                Just subFrameData ->
+                                    Msg.OpenChildFrame runtimeId subFrameData
 
-        Nothing ->
-            Html.div [ A.class "elm-reader-frame" ] [ Html.text "Failed to render frame!" ]
+                                Nothing ->
+                                    Msg.NoOp
+                        )
+                    ]
+                    []
+                , Html.text " out of "
+                , Html.text (String.fromInt (Array.length subframes))
+                ]
+
+        OpenFrame.Instrumented { sourceId } ->
+            case RenderedFrameMap.get sourceId stackUI.renderedFrames of
+                Just { html } ->
+                    frameWrapper [ html ]
+
+                Nothing ->
+                    frameWrapper [ Html.text "Frame failed to render -- it is not present in RenderedFrameMap!" ]

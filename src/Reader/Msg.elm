@@ -10,3 +10,4 @@ type Msg
     | HoverExpr TraceData.FrameId SourceMap.ExprId
     | UnHoverExpr
     | ClickExpr TraceData.FrameId SourceMap.ExprId
+    | OpenChildFrame TraceData.FrameId TraceData.InstrumentedFrameData
