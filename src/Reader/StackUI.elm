@@ -3,7 +3,6 @@ module Reader.StackUI exposing (StackUI, fromTrace, handleExprClick, handleOpenC
 import Debug
 
 import Elm.Kernel.Reader
-import Elm.Kernel.Debugger
 
 import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.SourceMap.Ids as SourceMapIds
@@ -15,6 +14,8 @@ import Reader.SourceMap.ExprDict as ExprDict exposing (ExprDict)
 import Reader.StackUI.RenderedFrameMap as RenderedFrameMap exposing (RenderedFrameMap)
 import Reader.StackUI.OpenFrame as OpenFrame exposing (OpenFrame)
 import Reader.StackUI.StackTree as StackTree exposing (StackTree)
+
+import Debugger.Expando as Expando exposing (Expando)
 
 import Array exposing (Array)
 import Set exposing (Set)
@@ -28,7 +29,7 @@ import Json.Decode as JD
 
 -- EXPR UI
 
-type alias ExprUI = String
+type alias ExprUI = Expando
 
 
 -- STACK UI
@@ -313,7 +314,7 @@ handleExprHover stackUI frame expr =
         ( Just exprData, Nothing ) ->
             let
                 newExprModel =
-                    Value.toString exprData.value
+                    Value.toExpando exprData.value
 
                 newStackFrames =
                     FrameDict.update
@@ -502,7 +503,7 @@ viewStackUI stackUI =
                                     let
                                         top = String.fromInt (frameData.topY + exprData.line) ++ "em"
                                         content =
-                                            Maybe.map Html.text exprData.model
+                                            Maybe.map (Expando.view Nothing >> Html.map (\_ -> Msg.NoOp)) exprData.model
                                             |> maybeToList
                                     in
                                     [ Html.div

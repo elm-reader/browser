@@ -8,7 +8,7 @@ module Debugger.Expando exposing
 
 
 import Dict exposing (Dict)
-import Elm.Kernel.Debugger
+import Elm.Kernel.Expando
 import Json.Decode as Json
 import Html exposing (Html, text, div, span)
 import Html.Attributes exposing (style, class)
@@ -50,7 +50,7 @@ seqTypeToString n seqType =
 
 init : a -> Expando
 init value =
-  initHelp True (Elm.Kernel.Debugger.init value)
+  initHelp True (Elm.Kernel.Expando.init value)
 
 
 initHelp : Bool -> Expando -> Expando
@@ -101,7 +101,7 @@ initHelp isOuter expando =
 
 merge : a -> Expando -> Expando
 merge value expando =
-  mergeHelp expando (Elm.Kernel.Debugger.init value)
+  mergeHelp expando (Elm.Kernel.Expando.init value)
 
 
 mergeHelp : Expando -> Expando -> Expando
