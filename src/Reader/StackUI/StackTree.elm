@@ -3,6 +3,7 @@ module Reader.StackUI.StackTree
         ( StackTree
         , singleton
         , map
+        , isOpen
         , openChildFrame
         )
 
@@ -25,6 +26,19 @@ type StackTree
         , openChild : StackTree
         , previouslyOpenedChildren : List StackTree
         }
+
+
+isOpen : TraceData.FrameId -> StackTree -> Bool
+isOpen frameId stackTree =
+    if TraceData.frameIdsEqual frameId (frameIdOf stackTree) then
+        True
+    else
+        case getOpenChild stackTree of
+            Nothing ->
+                False
+
+            Just child ->
+                isOpen frameId child
 
 
 {- Returns `Just` for valid OpenFrames -}
@@ -120,6 +134,8 @@ withThisOpenChild stackTree newOpenChild newChildren =
             let
                 ( id, subframes ) = st.first
                 newIdx =
+                    -- TODO: store a reverse-indexed array alongside the frame array
+                    -- to avoid this linear-time `indexOf`
                     indexOf
                         (\frame ->
                             TraceData.frameIdsEqual (frameIdOf newOpenChild) frame.runtimeId

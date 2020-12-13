@@ -342,13 +342,13 @@ handleExprUnHover stackUI =
 
 previewedExprCSSRule = """ {
   border-radius: 3px;
-  background-color: rgb(230, 230, 200);
+  background-color: rgb(230, 230, 200) !important;
 }
 """
 
 deadExprsCSSRule = """ {
   color: #bbb;
-  background-color: none !important;
+  background-color: none;
 }
 """
 
@@ -359,8 +359,8 @@ functionCallExprsCSSRule = """ {
 
 openFunctionCallExprsCSSRule = """ {
   border-radius: 3px;
-  background-color: rgb(255,255,250);
-  box-shadow: 0px 0px 1px 1px #ddc;
+  text-decoration: underline;
+  background-color: rgba(0,0,0,0.07);
 }
 """
 
@@ -404,7 +404,7 @@ viewStyle stackUI =
                     in
                     [ Html.text selector, Html.text previewedExprCSSRule ]
 
-        functionCallExprs =
+        exprsWithChildFrames =
             StackTree.map
                 (\openFrame ->
                     let
@@ -416,7 +416,7 @@ viewStyle stackUI =
                             ExprDict.toList exprs
                             |> List.filterMap
                                 (\(exprId, expr) ->
-                                    Maybe.map (\_ -> ( runtimeId, exprId )) expr.childFrame
+                                    Maybe.map (\child -> ( runtimeId, exprId, child )) expr.childFrame
                                 )
 
                         Nothing ->
@@ -425,6 +425,14 @@ viewStyle stackUI =
                 stackUI.stackTree
             |> List.concatMap (\x -> x)
 
+        functionCallExprs =
+            exprsWithChildFrames
+            |> List.map (\(runtimeId, exprId, child) -> (runtimeId, exprId))
+
+        openFunctionCallExprs =
+            exprsWithChildFrames
+            |> List.filter (\(runtimeId, exprId, child) -> StackTree.isOpen (TraceData.frameIdOfThunk child) stackUI.stackTree)
+            |> List.map (\(runtimeId, exprId, child) -> (runtimeId, exprId))
 
         displayedDeadExprs =
             StackTree.map
@@ -455,6 +463,7 @@ viewStyle stackUI =
     previewedExprStyle
         ++ cssRuleForExprs displayedDeadExprs deadExprsCSSRule
         ++ cssRuleForExprs functionCallExprs functionCallExprsCSSRule
+        ++ cssRuleForExprs openFunctionCallExprs openFunctionCallExprsCSSRule
 
 
 onMouseOver =
