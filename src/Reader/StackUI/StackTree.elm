@@ -101,7 +101,7 @@ map func stackTree =
             Nothing ->
                 []
             Just st ->
-                func (toOpenFrame st) :: map func st
+                map func st
 
 
 openChildFrame : TraceData.FrameId -> OpenFrame -> StackTree -> StackTree
