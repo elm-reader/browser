@@ -517,6 +517,25 @@ viewStackUI stackUI =
                                     []
                         Nothing ->
                             []
+
+        stackHeight =
+            FrameDict.get (StackTree.lastOpenChild stackUI.stackTree) stackUI.stackFrames
+            |> Maybe.map
+                (\{ topY, height } ->
+                    let
+                        linesToMiddleOfLastFrame =
+                            String.fromInt (topY + height // 2) ++ "em"
+
+                        total =
+                            "calc("
+                            ++ linesToMiddleOfLastFrame
+                            ++ " + max(50vh, 25vh + "
+                            ++ String.fromInt (height // 2)
+                            ++ "em))"
+                    in
+                    [ A.style "height" total ]
+                )
+            |> Maybe.withDefault []
     in
     Html.div
         [ A.class "elm-reader-container" ]
@@ -524,11 +543,11 @@ viewStackUI stackUI =
             [ A.class "elm-reader-details" ]
             previewedExpr
         , Html.div
-            [ A.class "elm-reader-stack"
-            , E.onMouseOut Msg.UnHoverExpr
-            , onMouseOver
-            , onClick
-            ]
+            ( [ A.class "elm-reader-stack"
+              , E.onMouseOut Msg.UnHoverExpr
+              , onMouseOver
+              , onClick
+              ] ++ stackHeight)
             (StackTree.map (viewOpenFrame stackUI) stackUI.stackTree)
         , Html.node
             "style"

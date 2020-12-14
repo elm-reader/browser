@@ -254,8 +254,7 @@ viewAfterInit { sources, tracesOutline, stackUI, mode } =
     in
     heading <|
         Html.div
-            [ A.style "padding-bottom" "40px"
-            ]
+            []
             (outlineSidebar ++
                 case stackUI of
                     Just stackUI_ ->

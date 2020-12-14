@@ -5,6 +5,7 @@ module Reader.StackUI.StackTree
         , map
         , isOpen
         , openChildFrame
+        , lastOpenChild
         )
 
 
@@ -39,6 +40,16 @@ isOpen frameId stackTree =
 
             Just child ->
                 isOpen frameId child
+
+
+lastOpenChild : StackTree -> TraceData.FrameId
+lastOpenChild stackTree =
+    case getOpenChild stackTree of
+        Nothing ->
+            frameIdOf stackTree
+
+        Just child ->
+            lastOpenChild child
 
 
 {- Returns `Just` for valid OpenFrames -}

@@ -16,6 +16,9 @@ import Reader.SourceMap as SourceMap exposing (SourceMap)
 import Reader.SourceMap.ExprDict as ExprDict exposing (ExprDict)
 
 
+-- TODO: remove TraceData.InstrumentedFrameData's from
+-- the OpenFrame type; replace with minimal used information,
+-- i.e. frame runtime IDs and source IDs
 type OpenFrame
     = Instrumented TraceData.InstrumentedFrameData
     | NonInstrumented
