@@ -10,7 +10,7 @@ import Platform.Sub as Sub exposing (none)
 import Platform.Cmd as Cmd exposing (none)
 
 import Reader exposing (ModeBrowse, ModeDebug, update, view, parseConfig, parseSourceMap, parseFrame)
-import Reader.Msg as Msg exposing (NoOp, HoverExpr, ClickExpr)
+import Reader.Msg as Msg exposing (NoOp, HoverExpr, OpenExpr, PinExpr)
 import Reader.SourceMap.Ids as Ids exposing (ExprId)
 import Reader.TraceData as TraceData exposing (FrameId)
 
@@ -39,7 +39,7 @@ var _Reader_impl = function (debugData) {
 
 var _Reader_mouseEventToMessage = function (eventValue) {
   var event = eventValue.a;
-  var target = event.target;
+  var target = event && event.target;
   if (!target) {
     return __JD_fail("Ignore event");
   }
@@ -71,7 +71,13 @@ outer:
     return __JD_fail("Ignore event");
   }
   var frameId = +frameClassMatch[1];
-  var messageConstructor = event.type === "mouseover" ? __Msg_HoverExpr : __Msg_ClickExpr;
+  if (event.shiftKey) {
+    event.preventDefault();
+  }
+  var messageConstructor =
+    (event.type === "mouseover"
+      ? __Msg_HoverExpr
+      : event.shiftKey ? __Msg_PinExpr : __Msg_OpenExpr);
   return __JD_succeed(
     A2(messageConstructor,
       A2(__TraceData_FrameId, frameId, __List_Nil),

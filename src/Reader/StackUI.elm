@@ -1,4 +1,15 @@
-module Reader.StackUI exposing (StackUI, fromTrace, handleExprClick, handleOpenChildFrame, handleExprHover, handleExprUnHover, viewStackUI)
+module Reader.StackUI
+    exposing
+        ( StackUI
+        , fromTrace
+        , handleExprOpen
+        , handleExprPin
+        , handleExprHover
+        , handleExprUnHover
+        , handleExprUIMessage
+        , handleOpenChildFrame
+        , viewStackUI
+        )
 
 import Debug
 
@@ -22,6 +33,7 @@ import Set exposing (Set)
 import Dict exposing (Dict)
 
 import Html exposing (Html)
+import Html.Keyed
 import Html.Attributes as A
 import Html.Events as E
 
@@ -31,12 +43,38 @@ import Json.Decode as JD
 
 type alias ExprUI = Expando
 
+viewExprUI
+    : { hovered : Bool, pinned : Bool, y : Int, frameId : TraceData.FrameId, exprId : SourceMap.ExprId, ui : ExprUI }
+    -> Html Msg
+viewExprUI { hovered, y, frameId, exprId, ui } =
+    let
+        ( hoverClass, hoverBorder ) =
+            if hovered then
+                ( [ A.class "elm-reader-expr-ui--hovered" ]
+                , [ Html.div [ A.class "elm-reader-expr-ui--hovered-rightborder" ] [] ]
+                )
+            else
+                ( [], [ Html.div [ A.class "elm-reader-expr-ui-rightborder" ] [] ] )
+    in
+    Html.div
+        (hoverClass ++
+            [ A.class "elm-reader-expr-ui"
+            , A.style "top" (String.fromInt y ++ "em")
+            , E.onMouseOver (Msg.HoverExpr frameId exprId)
+            , E.onMouseOut Msg.UnHoverExpr
+            ])
+        ( Html.map (Msg.ExprUIMsg frameId exprId) (Expando.view Nothing ui)
+            :: hoverBorder )
+
 
 -- STACK UI
 
 type alias StackUI =
     { stackTree : StackTree
     , renderedFrames : RenderedFrameMap
+    -- TODO: move stackFrames data into the StackTree. The logarithmic
+    -- lookup matters only helps to look up expressions on hover or click,
+    -- but searching linearly for the frame among *open frames* is fine.
     , stackFrames :
         FrameDict
             { exprs : ExprDict ActiveExprData
@@ -44,7 +82,7 @@ type alias StackUI =
             , topY : Int
             , height : Int
             }
-    , previewedExpr : Maybe ( TraceData.FrameId, SourceMap.ExprId )
+    , hoveredExpr : Maybe ( TraceData.FrameId, SourceMap.ExprId )
     -- TODO: , pinnedExprs : List ( TraceData.FrameId, SourceMap.ExprId )
     }
 
@@ -52,7 +90,7 @@ type alias StackUI =
 type alias ActiveExprData =
     { line : Int
     , value : Value
-    , model : Maybe ExprUI
+    , model : Maybe { pinned : Bool, ui : ExprUI }
     , childFrame : Maybe TraceData.FrameThunk
     }
 
@@ -118,7 +156,18 @@ fromTrace srcMap frameTrace =
             case frameTrace of
                 TraceData.Instrumented data ->
                     let
-                        ( liveExprs, deadExprs ) = exprsFromTrace srcMap data
+                        ( liveExprs_, deadExprs ) = exprsFromTrace srcMap data
+                        -- Open the arguments to `update`:
+                        -- TODO: do this properly
+                        liveExprs =
+                            ExprDict.map
+                                (\(SourceMapIds.ExprId i) expr ->
+                                    if i == 1 || i == 2 then
+                                        { expr | model = Just { pinned = True, ui = Value.toExpando expr.value } }
+                                    else
+                                        expr
+                                )
+                                liveExprs_
                         height =
                             -- On error, default to 10 arbitrarily
                             SourceMap.getFrameHeight data.sourceId srcMap |> Maybe.withDefault 10
@@ -171,7 +220,7 @@ fromTrace srcMap frameTrace =
                 { stackTree = singleton
                 , renderedFrames = RenderedFrameMap.ensure srcMap sourceFrameIds RenderedFrameMap.empty
                 , stackFrames = stackFrames
-                , previewedExpr = Nothing
+                , hoveredExpr = Nothing
                 }
 
         Nothing ->
@@ -256,8 +305,8 @@ openChildFrame srcMap stackUI parentFrameId childFrame =
             openChildFrame srcMap newStackUI (TraceData.frameIdOf childFrame) grandchildFrame
 
 
-handleExprClick : StackUI -> SourceMap -> TraceData.FrameId -> SourceMap.ExprId -> StackUI
-handleExprClick stackUI srcMap parentFrameId exprId =
+handleExprOpen : StackUI -> SourceMap -> TraceData.FrameId -> SourceMap.ExprId -> StackUI
+handleExprOpen stackUI srcMap parentFrameId exprId =
     let
         expr =
             FrameDict.get parentFrameId stackUI.stackFrames
@@ -288,6 +337,65 @@ handleExprClick stackUI srcMap parentFrameId exprId =
             stackUI
 
 
+updateExpr : StackUI -> TraceData.FrameId -> SourceMap.ExprId -> (ActiveExprData -> ActiveExprData) -> StackUI
+updateExpr stackUI frameId exprId updater =
+    { stackUI
+        | stackFrames =
+            FrameDict.update
+                frameId
+                (\frameInfo ->
+                    { frameInfo
+                        | exprs =
+                            ExprDict.update
+                                exprId
+                                updater
+                                frameInfo.exprs
+                        }
+                )
+                stackUI.stackFrames
+        }
+
+checkExpr : StackUI -> TraceData.FrameId -> SourceMap.ExprId -> (ActiveExprData -> Bool) -> Bool
+checkExpr stackUI frameId exprId f =
+    FrameDict.get
+        frameId
+        stackUI.stackFrames
+    |> Maybe.map .exprs
+    |> Maybe.andThen (ExprDict.get exprId)
+    |> Maybe.map f
+    |> Maybe.withDefault False
+
+
+handleExprPin : StackUI -> TraceData.FrameId -> SourceMap.ExprId -> StackUI
+handleExprPin stackUI frameId exprId =
+    let
+        newStackUI =
+            updateExpr
+                stackUI
+                frameId
+                exprId
+                (\expr ->
+                    { expr
+                        | model =
+                            Just
+                                { pinned = not (expr.model |> Maybe.map .pinned |> Maybe.withDefault False)
+                                , ui =
+                                    case expr.model of
+                                        Just { ui } ->
+                                            ui
+
+                                        Nothing ->
+                                            Value.toExpando expr.value
+                                }
+                        }
+                )
+    in
+    if not (checkExpr newStackUI frameId exprId (.model >> Maybe.map .pinned >> Maybe.withDefault False)) then
+        { newStackUI | hoveredExpr = Nothing }
+    else
+        newStackUI
+
+
 handleOpenChildFrame : StackUI -> SourceMap -> TraceData.FrameId -> TraceData.InstrumentedFrameData -> StackUI
 handleOpenChildFrame stackUI srcMap parentId child =
     openChildFrame srcMap stackUI parentId (TraceData.Instrumented child)
@@ -306,15 +414,15 @@ handleExprHover stackUI frame expr =
     in
     case ( maybeExprData, exprModel ) of
         ( Nothing, _ ) ->
-            { stackUI | previewedExpr = Nothing }
+            { stackUI | hoveredExpr = Nothing }
 
         ( Just _, Just _ ) ->
-            { stackUI | previewedExpr = Just ( frame, expr ) }
+            { stackUI | hoveredExpr = Just ( frame, expr ) }
 
         ( Just exprData, Nothing ) ->
             let
                 newExprModel =
-                    Value.toExpando exprData.value
+                    { pinned = False, ui = Value.toExpando exprData.value }
 
                 newStackFrames =
                     FrameDict.update
@@ -329,21 +437,37 @@ handleExprHover stackUI frame expr =
                         stackUI.stackFrames
             in
             { stackUI
-                | previewedExpr = Just ( frame, expr )
+                | hoveredExpr = Just ( frame, expr )
                 , stackFrames = newStackFrames
                 }
 
 
 handleExprUnHover : StackUI -> StackUI
 handleExprUnHover stackUI =
-    { stackUI | previewedExpr = Nothing }
+    { stackUI | hoveredExpr = Nothing }
+
+
+handleExprUIMessage : StackUI -> TraceData.FrameId -> SourceMap.ExprId -> Expando.Msg -> StackUI
+handleExprUIMessage stackUI frameId exprId expandoMsg =
+    updateExpr
+        stackUI
+        frameId
+        exprId
+        (\expr ->
+            { expr
+                | model =
+                    expr.model
+                        |> Maybe.map (\model -> { model | ui = Expando.update expandoMsg model.ui })
+                }
+
+        )
 
 
 -- VIEW
 
-previewedExprCSSRule = """ {
+hoveredExprCSSRule = """ {
   border-radius: 3px;
-  background-color: rgb(230, 230, 200) !important;
+  background-color: rgb(232, 232, 240) !important;
 }
 """
 
@@ -391,7 +515,7 @@ viewStyle stackUI =
     -- - highlight exprs whose childFrame is open
     let
         previewedExprStyle =
-            case stackUI.previewedExpr of
+            case stackUI.hoveredExpr of
                 Nothing ->
                     []
 
@@ -403,7 +527,7 @@ viewStyle stackUI =
                                 ++ " .elm-reader-expr-"
                                 ++ String.fromInt exprId
                     in
-                    [ Html.text selector, Html.text previewedExprCSSRule ]
+                    [ Html.text selector, Html.text hoveredExprCSSRule ]
 
         exprsWithChildFrames =
             StackTree.map
@@ -472,7 +596,7 @@ onMouseOver =
         JD.andThen Elm.Kernel.Reader.mouseEventToMessage JD.value
 
 
-onClick =
+onMouseDown =
     E.on "mousedown" <|
         JD.andThen Elm.Kernel.Reader.mouseEventToMessage JD.value
 
@@ -490,34 +614,6 @@ maybeToList maybe =
 viewStackUI : StackUI -> Html Msg
 viewStackUI stackUI =
     let
-        previewedExpr =
-            case stackUI.previewedExpr of
-                Nothing ->
-                    []
-
-                Just ( frameId, exprId ) ->
-                    case FrameDict.get frameId stackUI.stackFrames of
-                        Just frameData ->
-                            case ExprDict.get exprId frameData.exprs of
-                                Just exprData ->
-                                    let
-                                        top = String.fromInt (frameData.topY + exprData.line) ++ "em"
-                                        content =
-                                            Maybe.map (Expando.view Nothing >> Html.map (\_ -> Msg.NoOp)) exprData.model
-                                            |> maybeToList
-                                    in
-                                    [ Html.div
-                                        [ A.style "position" "absolute"
-                                        , A.style "top" top
-                                        ]
-                                        content
-                                    ]
-
-                                Nothing ->
-                                    []
-                        Nothing ->
-                            []
-
         stackHeight =
             FrameDict.get (StackTree.lastOpenChild stackUI.stackTree) stackUI.stackFrames
             |> Maybe.map
@@ -539,14 +635,12 @@ viewStackUI stackUI =
     in
     Html.div
         [ A.class "elm-reader-container" ]
-        [ Html.div
-            [ A.class "elm-reader-details" ]
-            previewedExpr
+        [ viewDetailsSidebar stackUI
         , Html.div
             ( [ A.class "elm-reader-stack"
               , E.onMouseOut Msg.UnHoverExpr
               , onMouseOver
-              , onClick
+              , onMouseDown
               ] ++ stackHeight)
             (StackTree.map (viewOpenFrame stackUI) stackUI.stackTree)
         , Html.node
@@ -555,6 +649,79 @@ viewStackUI stackUI =
             (viewStyle stackUI)
         ]
 
+
+exprIdsToKey : TraceData.FrameId -> SourceMap.ExprId -> String
+exprIdsToKey (TraceData.FrameId f _) (SourceMapIds.ExprId e) =
+    "frame-" ++ String.fromInt f ++ "--expr" ++ String.fromInt e
+
+
+viewDetailsSidebar : StackUI -> Html Msg
+viewDetailsSidebar stackUI =
+    let
+        isHovered =
+            case stackUI.hoveredExpr of
+                Just ( hoveredFrameId, hoveredExprId ) ->
+                    (\frameId exprId ->
+                        TraceData.frameIdsEqual frameId hoveredFrameId
+                            && exprId == hoveredExprId)
+
+                Nothing ->
+                    (\_ _ -> False)
+
+        displayedExprs =
+            StackTree.map
+                (\openFrame ->
+                    let
+                        frameId =
+                            OpenFrame.runtimeFrameIdOf openFrame
+                    in
+                    case FrameDict.get frameId stackUI.stackFrames of
+                        Nothing ->
+                            []
+
+                        Just { topY, exprs } ->
+                            exprs
+                            |> ExprDict.toList
+                            |> List.filterMap
+                                (\( exprId, { line, model } ) ->
+                                    case model of
+                                        Just { pinned, ui } ->
+                                            if pinned || isHovered frameId exprId then
+                                                Just
+                                                    { frameId = frameId
+                                                    , exprId = exprId
+                                                    , y = topY + line
+                                                    , ui = ui
+                                                    , hovered = isHovered frameId exprId
+                                                    , pinned = pinned
+                                                    }
+                                            else
+                                                Nothing
+
+                                        _ ->
+                                            Nothing 
+                                )
+                )
+                stackUI.stackTree
+            |> List.concatMap identity
+            |> List.sortBy (\{ y } -> y)
+            |> List.foldl
+                (\exprViewInfo (prevElems, bottomOfPrev) ->
+                    let
+                        topOfThis =
+                            max (bottomOfPrev + 1) exprViewInfo.y
+                    in
+                    ( { exprViewInfo | y = topOfThis } :: prevElems
+                    , topOfThis + Expando.viewHeight Nothing exprViewInfo.ui
+                    )
+                )
+                ([], 0)
+            |> Tuple.first
+            |> List.map viewExprUI
+    in
+    Html.div
+        [ A.class "elm-reader-details" ]
+        displayedExprs
 
 viewOpenFrame : StackUI -> OpenFrame -> Html Msg
 viewOpenFrame stackUI openFrame =

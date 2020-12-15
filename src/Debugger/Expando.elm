@@ -4,6 +4,7 @@ module Debugger.Expando exposing
   , merge
   , Msg, update
   , view
+  , viewHeight
   )
 
 
@@ -284,6 +285,40 @@ view maybeKey expando =
 
     Constructor maybeName isClosed valueList ->
       viewConstructor maybeKey maybeName isClosed valueList
+
+
+viewHeight : Maybe String -> Expando -> Int
+viewHeight maybeKey expando =
+  case expando of
+    S stringRep ->
+      1
+
+    Primitive stringRep ->
+      1
+
+    Sequence seqType isClosed valueList ->
+      if isClosed then
+        1
+      else
+        2 + (List.sum <| List.map (viewHeight maybeKey) valueList)
+
+    Dictionary isClosed keyValuePairs ->
+      if isClosed then
+        1
+      else
+        2 + (List.sum <| List.map (\(a, b) -> viewHeight maybeKey a + viewHeight maybeKey b) keyValuePairs)
+
+    Record isClosed valueDict ->
+        if isClosed then
+          1
+        else
+          2 + (List.sum <| List.map (viewHeight maybeKey) <| Dict.values valueDict)
+
+    Constructor maybeName isClosed valueList ->
+      if isClosed then
+        1
+      else
+        1 + (List.sum <| List.map (viewHeight maybeKey) valueList)
 
 
 

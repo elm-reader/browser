@@ -500,28 +500,61 @@ resumeStyle = """
 }
 
 .elm-reader-container {
-  margin: 5px;
-}
-
-.elm-reader-stack {
-  position: relative;
-  width: 80%;
-  left: 20%;
+  margin: 0;
 }
 
 .elm-reader-details {
   position: relative;
-  width: 20%;
+  width: 30%;
   top: 0;
-  margin: 5px;
+  line-height: 1em;
+}
+
+.elm-reader-expr-ui {
+  position: absolute;
+  width: 100%;
+  padding: 0.5em 5px 0.5em 5px;
+  box-sizing: border-box;
+}
+
+.elm-reader-expr-ui-rightborder {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 10px;
+  background-color: white;
+  box-sizing: border-box;
+}
+
+.elm-reader-expr-ui--hovered-rightborder {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 10px;
+  background-color: rgb(232, 232, 240);
+  box-sizing: border-box;
+}
+
+.elm-reader-expr-ui > div {
+  white-space: nowrap;
+}
+
+.elm-reader-expr-ui--hovered {
+  position: absolute;
+  background-color: rgb(232, 232, 240);
+}
+
+.elm-reader-stack {
+  position: relative;
+  width: 70%;
+  left: 30%;
+  user-select: none;
 }
 
 .elm-reader-expr {
   cursor: default;
-}
-
-.elm-reader-expr--hovered {
-  background-color: rgb(230, 230, 200) !important;
 }
 
 .elm-reader-call {

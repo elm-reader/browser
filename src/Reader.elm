@@ -197,20 +197,26 @@ updateAfterInit msg model =
         Msg.NoOp ->
             model
 
+        Msg.OpenExpr frameId exprId ->
+            { model | stackUI = (map1_4 StackUI.handleExprOpen) model.stackUI model.sources frameId exprId }
+
+        Msg.PinExpr frameId exprId ->
+            { model | stackUI = (map1_3 StackUI.handleExprPin) model.stackUI frameId exprId }
+
         Msg.HoverExpr frameId exprId ->
             { model | stackUI = (map1_3 StackUI.handleExprHover) model.stackUI frameId exprId }
 
         Msg.UnHoverExpr ->
             { model | stackUI = Maybe.map StackUI.handleExprUnHover model.stackUI }
 
-        Msg.ClickExpr frameId exprId ->
-            { model | stackUI = (map1_4 StackUI.handleExprClick) model.stackUI model.sources frameId exprId }
-
         Msg.OpenChildFrame parentFrameId childFrame ->
             { model | stackUI = (map1_4 StackUI.handleOpenChildFrame) model.stackUI model.sources parentFrameId childFrame }
 
         Msg.SelectTopLevelFrame frameTrace ->
             { model | stackUI = StackUI.fromTrace model.sources (TraceData.Instrumented frameTrace) }
+
+        Msg.ExprUIMsg frameId exprId expandoMsg ->
+            { model | stackUI = (map1_4 StackUI.handleExprUIMessage) model.stackUI frameId exprId expandoMsg }
 
 
 

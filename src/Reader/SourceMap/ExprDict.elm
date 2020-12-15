@@ -1,10 +1,19 @@
-module Reader.SourceMap.ExprDict exposing (ExprDict, empty, get, set, update, find, fromList, toList, unionMany, keys)
+module Reader.SourceMap.ExprDict exposing (ExprDict, empty, get, set, update, find, fromList, toList, unionMany, keys, size, map)
 
 import Dict exposing (Dict)
 import Reader.SourceMap.Ids exposing (ExprId(..))
 
 
 type ExprDict v = ExprDict (Dict Int v)
+
+
+size : ExprDict v -> Int
+size (ExprDict dict) = Dict.size dict
+
+
+map : (ExprId -> a -> b) -> ExprDict a -> ExprDict b
+map func (ExprDict dict) =
+    ExprDict <| Dict.map (ExprId >> func) dict
 
 
 fromList : List ( ExprId, a ) -> ExprDict a
