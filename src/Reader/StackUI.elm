@@ -119,20 +119,21 @@ exprsFromTrace srcMap frame =
                         )
                     |> ExprDict.fromList
 
-                exprRegion exprId =
+                exprStartLine exprId =
                     ExprDict.get exprId frameRegions
-                    |> Maybe.andThen List.head
+                    |> Maybe.andThen (List.map (\r -> ( r.start.line, r.start.col )) >> List.minimum)
+                    |> Maybe.map Tuple.first
 
                 liveExprs =
                     frame.exprs
                         |> ExprDict.toList
                         |> List.filterMap
                             (\(exprId, expr) ->
-                                case (TraceData.exprValue expr, exprRegion exprId) of
-                                    (Just value, Just { start }) ->
+                                case (TraceData.exprValue expr, exprStartLine exprId) of
+                                    (Just value, Just line) ->
                                         Just
                                             ( exprId
-                                            , { line = start.line - sourceFrame.region.start.line
+                                            , { line = line - sourceFrame.region.start.line
                                               , value = value
                                               , model = Nothing
                                               , childFrame = TraceData.exprChildFrame expr
