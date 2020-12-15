@@ -6,6 +6,7 @@ module Reader
         , parseConfig
         , update
         , updateExec
+        , adaptModel
         , view
         )
 
@@ -62,13 +63,6 @@ parseConfig mode srcMap data =
 
         Ok { sources, traces } ->
             let
-                stackUI =
-                    case traces of
-                        TraceData (frameTrace :: _) ->
-                            StackUI.fromTrace sources frameTrace
-
-                        TraceData [] ->
-                            Nothing
                 tracesOutline =
                     let
                         (TraceData topLevelFrames) = traces
@@ -92,7 +86,7 @@ parseConfig mode srcMap data =
             ProgramDataReceived
                 { sources = sources
                 , tracesOutline = tracesOutline
-                , stackUI = stackUI
+                , stackUI = Nothing
                 , mode = mode
                 }
 
@@ -112,6 +106,33 @@ updateExec =
     Reader.Hooks.updateExec
 
 
+
+-- TODO: use a different strategy to preserve `renderedFrames : RenderedFrameMap` when
+-- the debugger switches views. This is hairy and not ideal (it's still lost when
+-- the user Resumes).
+adaptModel : Maybe Model -> Model -> Model
+adaptModel old new =
+    case ( old, new ) of
+        ( Just (ProgramDataReceived oldModel), ProgramDataReceived newModel ) ->
+            case List.head newModel.tracesOutline.topLevelInstrumented of
+                Just trace ->
+                    ProgramDataReceived
+                        { newModel | stackUI = StackUI.adaptFromTrace newModel.sources oldModel.stackUI (TraceData.Instrumented trace) }
+
+                Nothing ->
+                    new
+
+        ( Nothing, ProgramDataReceived newModel ) ->
+            case List.head newModel.tracesOutline.topLevelInstrumented of
+                Just trace ->
+                    ProgramDataReceived
+                        { newModel | stackUI = StackUI.adaptFromTrace newModel.sources Nothing (TraceData.Instrumented trace) }
+
+                Nothing ->
+                    new
+
+        _ ->
+            new
 
 
 -- MODEL
@@ -213,7 +234,7 @@ updateAfterInit msg model =
             { model | stackUI = (map1_4 StackUI.handleOpenChildFrame) model.stackUI model.sources parentFrameId childFrame }
 
         Msg.SelectTopLevelFrame frameTrace ->
-            { model | stackUI = StackUI.fromTrace model.sources (TraceData.Instrumented frameTrace) }
+            { model | stackUI = StackUI.adaptFromTrace model.sources model.stackUI (TraceData.Instrumented frameTrace) }
 
         Msg.ExprUIMsg frameId exprId expandoMsg ->
             { model | stackUI = (map1_4 StackUI.handleExprUIMessage) model.stackUI frameId exprId expandoMsg }

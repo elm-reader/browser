@@ -1,6 +1,7 @@
 module Reader.StackUI
     exposing
         ( StackUI
+        , adaptFromTrace
         , fromTrace
         , handleExprOpen
         , handleExprPin
@@ -10,8 +11,6 @@ module Reader.StackUI
         , handleOpenChildFrame
         , viewStackUI
         )
-
-import Debug
 
 import Elm.Kernel.Reader
 
@@ -148,8 +147,13 @@ exprsFromTrace srcMap frame =
             ( liveExprs, deadExprs )
 
 
-fromTrace : SourceMap -> TraceData.Frame -> Maybe StackUI
-fromTrace srcMap frameTrace =
+adaptFromTrace : SourceMap  -> Maybe StackUI -> TraceData.Frame -> Maybe StackUI
+adaptFromTrace srcMap old newFrame =
+    fromTrace srcMap (old |> Maybe.map .renderedFrames |> Maybe.withDefault RenderedFrameMap.empty) newFrame
+
+
+fromTrace : SourceMap -> RenderedFrameMap -> TraceData.Frame -> Maybe StackUI
+fromTrace srcMap renderedFrames frameTrace =
     let
         openFrame = OpenFrame.fromTrace frameTrace
 
@@ -219,7 +223,7 @@ fromTrace srcMap frameTrace =
         Just singleton ->
             Just
                 { stackTree = singleton
-                , renderedFrames = RenderedFrameMap.ensure srcMap sourceFrameIds RenderedFrameMap.empty
+                , renderedFrames = RenderedFrameMap.ensure srcMap sourceFrameIds renderedFrames
                 , stackFrames = stackFrames
                 , hoveredExpr = Nothing
                 }

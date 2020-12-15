@@ -213,8 +213,11 @@ wrapUpdate update msg model =
 
     Jump index ->
       let
-        (indexModel, indexMsg, readerModel) =
+        (indexModel, indexMsg, readerModel_) =
           History.get update index model.history
+
+        readerModel =
+          Reader.adaptModel model.reader readerModel_
       in
       ( { model
           | state = Paused index indexModel (getLatestModel model.state)
