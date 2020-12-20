@@ -58,7 +58,7 @@ viewExprUI { hovered, y, frameId, exprId, ui } =
     Html.div
         (hoverClass ++
             [ A.class "elm-reader-expr-ui"
-            , A.style "top" (String.fromInt y ++ "em")
+            , A.style "top" (String.fromFloat (1.1 * toFloat y) ++ "em")
             , E.onMouseOver (Msg.HoverExpr frameId exprId)
             , E.onMouseOut Msg.UnHoverExpr
             ])
@@ -606,6 +606,11 @@ onMouseDown =
         JD.andThen Elm.Kernel.Reader.mouseEventToMessage JD.value
 
 
+onMouseDblClick =
+    E.on "dblclick" <|
+        JD.andThen Elm.Kernel.Reader.mouseEventToMessage JD.value
+
+
 maybeToList : Maybe a -> List a
 maybeToList maybe =
     case maybe of
@@ -625,13 +630,13 @@ viewStackUI stackUI =
                 (\{ topY, height } ->
                     let
                         linesToMiddleOfLastFrame =
-                            String.fromInt (topY + height // 2) ++ "em"
+                            String.fromFloat (1.1 * toFloat (topY + height // 2)) ++ "em"
 
                         total =
                             "calc("
                             ++ linesToMiddleOfLastFrame
                             ++ " + max(50vh, 25vh + "
-                            ++ String.fromInt (height // 2)
+                            ++ String.fromFloat (1.1 * toFloat (height // 2))
                             ++ "em))"
                     in
                     [ A.style "height" total ]
@@ -646,6 +651,7 @@ viewStackUI stackUI =
               , E.onMouseOut Msg.UnHoverExpr
               , onMouseOver
               , onMouseDown
+              , onMouseDblClick
               ] ++ stackHeight)
             (StackTree.map (viewOpenFrame stackUI) stackUI.stackTree)
         , Html.node
@@ -743,16 +749,16 @@ viewOpenFrame stackUI openFrame =
             Html.div
                 [ A.class "elm-reader-frame"
                 , A.class ("elm-reader-frame-" ++ String.fromInt numRuntimeId)
-                , A.style "top" (String.fromFloat (toFloat topY - frameLinePadding) ++ "em")
-                , A.style "height" (String.fromInt height ++ "em")
+                , A.style "top" (String.fromFloat (1.1 * (toFloat topY - frameLinePadding)) ++ "em")
+                , A.style "height" (String.fromFloat (1.1 * toFloat height) ++ "em")
                 ]
     in
     case openFrame of
         OpenFrame.NonInstrumented _ idx subframes ->
             frameWrapper
-                [ Html.text "This frame is not instrumented, but has "
+                [ Html.text "This library function created "
                 , Html.text (String.fromInt (Array.length subframes))
-                , Html.text " instrumented sub-frames."
+                , Html.text " sub-frames."
                 , Html.br [] []
                 , Html.text "Showing frame "
                 , Html.input

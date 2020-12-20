@@ -510,13 +510,13 @@ resumeStyle = """
   position: relative;
   width: 30%;
   top: 0;
-  line-height: 1em;
+  line-height: 1.1em;
 }
 
 .elm-reader-expr-ui {
   position: absolute;
   width: 100%;
-  padding: 0.5em 5px 0.5em 5px;
+  padding: 0.55em 5px 0.55em 5px;
   box-sizing: border-box;
 }
 
@@ -569,9 +569,9 @@ resumeStyle = """
 }
 
 .elm-reader-frame {
-  line-height: 1em;
-  width: calc(100% - 1em);
-  padding: 0.5em;
+  line-height: 1.1em;
+  width: calc(100% - 1.1em);
+  padding: 0.55em;
   border-radius: 4px;
   box-shadow: 2px 2px 2px 2px #ccc;
   background-color: rgb(253, 253, 253);

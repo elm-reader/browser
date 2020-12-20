@@ -77,7 +77,7 @@ outer:
   var messageConstructor =
     (event.type === "mouseover"
       ? __Msg_HoverExpr
-      : event.shiftKey ? __Msg_PinExpr : __Msg_OpenExpr);
+      : event.type === "dblclick" ? __Msg_PinExpr : __Msg_OpenExpr);
   return __JD_succeed(
     A2(messageConstructor,
       A2(__TraceData_FrameId, frameId, __List_Nil),
