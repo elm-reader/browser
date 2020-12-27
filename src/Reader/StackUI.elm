@@ -728,9 +728,24 @@ viewDetailsSidebar stackUI =
                 )
                 ([], 0)
             |> Tuple.first
-            |> List.map viewExprUI
+            |> List.reverse
+            |> List.map
+                (\exprViewInfo ->
+                    let
+                        (TraceData.FrameId frameId _) = exprViewInfo.frameId
+
+                        (SourceMapIds.ExprId exprId) = exprViewInfo.exprId
+
+                        key =
+                            String.fromInt frameId
+                            ++ "-"
+                            ++ String.fromInt exprId
+                    in
+                    ( key, viewExprUI exprViewInfo )
+                )
     in
-    Html.div
+    Html.Keyed.node
+        "div"
         [ A.class "elm-reader-details" ]
         displayedExprs
 

@@ -518,6 +518,8 @@ resumeStyle = """
   width: 100%;
   padding: 0.55em 5px 0.55em 5px;
   box-sizing: border-box;
+  background-color: white;
+  transition: top 0.2s ease;
 }
 
 .elm-reader-expr-ui-rightborder {
